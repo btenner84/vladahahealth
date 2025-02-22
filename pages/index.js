@@ -1,6 +1,38 @@
+import { useEffect, useState } from 'react';
+import { auth } from '../firebase';
 import { theme } from '../styles/theme';
+import Link from 'next/link';
 
 export default function Home() {
+  const [user, setUser] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    // Check for user auth
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      setUser(user);
+    });
+
+    // Handle responsive design
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    // Initial check
+    if (typeof window !== 'undefined') {
+      handleResize();
+      window.addEventListener('resize', handleResize);
+    }
+
+    // Cleanup
+    return () => {
+      unsubscribe();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+    };
+  }, []);
+
   return (
     <div style={{
       minHeight: "100vh",
@@ -15,7 +47,7 @@ export default function Home() {
         top: 0,
         left: 0,
         right: 0,
-        padding: '1.5rem',
+        padding: '1rem',
         background: 'rgba(15, 23, 42, 0.8)',
         backdropFilter: 'blur(12px)',
         zIndex: 50
@@ -34,14 +66,28 @@ export default function Home() {
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent'
           }}>VladaHealth</div>
-          <a href="/signin" style={{
-            padding: '0.75rem 1.5rem',
-            borderRadius: theme.borderRadius.sm,
-            border: `2px solid ${theme.colors.primary}`,
-            color: theme.colors.primary,
-            textDecoration: 'none',
-            transition: 'all 0.3s ease'
-          }}>Sign In</a>
+          
+          {user ? (
+            // Show dashboard link if user is logged in
+            <Link href="/dashboard" style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: theme.borderRadius.sm,
+              border: `2px solid ${theme.colors.primary}`,
+              color: theme.colors.primary,
+              textDecoration: 'none',
+              transition: 'all 0.3s ease'
+            }}>Go to Dashboard</Link>
+          ) : (
+            // Show sign in link if no user
+            <Link href="/signin" style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: theme.borderRadius.sm,
+              border: `2px solid ${theme.colors.primary}`,
+              color: theme.colors.primary,
+              textDecoration: 'none',
+              transition: 'all 0.3s ease'
+            }}>Sign In</Link>
+          )}
         </div>
       </nav>
 
@@ -52,9 +98,9 @@ export default function Home() {
         alignItems: "center",
         justifyContent: "center",
         minHeight: "100vh",
-        padding: "2rem",
+        padding: "1rem",
         position: "relative",
-        background: `radial-gradient(circle at 50% 50%, ${theme.colors.bgSecondary} 0%, ${theme.colors.bgPrimary} 100%)`
+        textAlign: "center"
       }}>
         {/* Animated Elements */}
         <div style={{
@@ -73,13 +119,13 @@ export default function Home() {
           maxWidth: "800px"
         }}>
           <h1 style={{
-            fontSize: "4.5rem",
+            fontSize: isMobile ? "2.5rem" : "4.5rem",
             fontWeight: "800",
             marginBottom: "1.5rem",
             background: theme.colors.gradientPrimary,
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
-            textShadow: theme.shadows.glow
+            padding: "0 1rem"
           }}>Fight Back Against Medical Bills</h1>
           
           <h2 style={{
@@ -243,15 +289,24 @@ export default function Home() {
           margin: 0;
           padding: 0;
           box-sizing: border-box;
+          -webkit-text-size-adjust: 100%;
         }
         
         html {
+          font-size: 16px;
           scroll-behavior: smooth;
         }
         
         body {
           margin: 0;
           font-family: Inter, system-ui, sans-serif;
+          overflow-x: hidden;
+        }
+
+        @media (max-width: 768px) {
+          html {
+            font-size: 14px;
+          }
         }
       `}</style>
     </div>

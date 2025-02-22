@@ -56,7 +56,7 @@ export default function Signup() {
         formData.password
       );
       console.log('User created:', userCredential.user);
-      router.push('/dashboard');
+      router.push('/profile-setup');
     } catch (error) {
       console.error('Signup error:', error);
       setError(error.message
@@ -76,7 +76,7 @@ export default function Signup() {
     try {
       const result = await signInWithPopup(auth, provider);
       console.log('Google sign in successful:', result.user);
-      router.push('/dashboard');
+      router.push('/profile-setup');
     } catch (error) {
       console.error('Google sign in error:', error);
       setError('Failed to sign in with Google. Please try again.');

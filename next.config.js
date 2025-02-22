@@ -2,7 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-  output: 'standalone',
+  // Remove the standalone output for now
+  // output: 'standalone',
 }
 
 module.exports = nextConfig 

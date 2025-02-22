@@ -3,22 +3,103 @@ import { useRouter } from 'next/router';
 import { auth } from '../firebase';
 import { theme } from '../styles/theme';
 import Link from 'next/link';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (user) {
         setUser(user);
+        // Fetch user profile
+        try {
+          const profileDoc = await getDoc(doc(db, 'userProfiles', user.uid));
+          if (profileDoc.exists()) {
+            setUserProfile(profileDoc.data());
+          } else {
+            // Redirect to profile setup if no profile exists
+            router.push('/profile-setup');
+          }
+        } catch (error) {
+          console.error('Error fetching profile:', error);
+        }
       } else {
         router.push('/signin');
       }
+      setIsLoading(false);
     });
 
     return () => unsubscribe();
   }, [router]);
+
+  const ProfileSection = () => (
+    <div style={{
+      background: theme.colors.bgSecondary,
+      borderRadius: theme.borderRadius.lg,
+      padding: "2rem",
+      marginBottom: "2rem",
+      border: "1px solid rgba(255, 255, 255, 0.1)"
+    }}>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: "1.5rem"
+      }}>
+        <h2 style={{
+          fontSize: "1.8rem",
+          fontWeight: "700",
+          background: theme.colors.gradientSecondary,
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent"
+        }}>Your Profile</h2>
+        <Link href="/profile-setup" style={{
+          padding: "0.75rem 1.5rem",
+          background: "transparent",
+          border: `1px solid ${theme.colors.primary}`,
+          borderRadius: theme.borderRadius.md,
+          color: theme.colors.primary,
+          textDecoration: "none"
+        }}>
+          Edit Profile
+        </Link>
+      </div>
+
+      {userProfile ? (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+          gap: "2rem"
+        }}>
+          <div>
+            <h3 style={{color: theme.colors.textSecondary}}>Location</h3>
+            <p>{userProfile.location.state}</p>
+            <p>{userProfile.location.zipCode}</p>
+          </div>
+          <div>
+            <h3 style={{color: theme.colors.textSecondary}}>Insurance</h3>
+            <p>Type: {userProfile.insurance.type}</p>
+            <p>Provider: {userProfile.insurance.provider}</p>
+            {userProfile.insurance.planType && (
+              <p>Plan Type: {userProfile.insurance.planType}</p>
+            )}
+            {userProfile.insurance.hasSecondaryInsurance && (
+              <p>Secondary: {userProfile.insurance.secondaryProvider}</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div style={{textAlign: "center", color: theme.colors.textSecondary}}>
+          Please complete your profile to get started
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div style={{
@@ -94,6 +175,7 @@ export default function Dashboard() {
         margin: "0 auto",
         padding: "7rem 2rem 2rem",
       }}>
+        <ProfileSection />
         {/* Welcome Section */}
         <div style={{
           background: `linear-gradient(135deg, ${theme.colors.bgSecondary} 0%, rgba(30, 41, 59, 0.5) 100%)`,
