@@ -35,6 +35,25 @@ function MyApp({ Component, pageProps }) {
             font-size: 16px !important; /* Prevents zoom on iOS */
           }
         }
+
+        @media (max-width: 768px) {
+          .auth-container {
+            flex-direction: column;
+          }
+          
+          .auth-panel {
+            padding: 2rem 1rem;
+          }
+          
+          h1 {
+            font-size: 2.5rem !important;
+          }
+          
+          input, select, button {
+            font-size: 16px !important;
+            padding: 0.75rem !important;
+          }
+        }
       `}</style>
       <Component {...pageProps} />
     </>

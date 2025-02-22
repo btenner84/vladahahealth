@@ -2,7 +2,7 @@ import { auth, provider } from '../firebase';
 import { signInWithPopup, signInWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { theme } from '../styles/theme';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -14,6 +14,24 @@ export default function SignIn() {
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    if (typeof window !== 'undefined') {
+      handleResize();
+      window.addEventListener('resize', handleResize);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+    };
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -57,7 +75,7 @@ export default function SignIn() {
       background: theme.colors.bgPrimary,
       fontFamily: "Inter, system-ui, sans-serif",
       color: theme.colors.textPrimary,
-      display: "flex",
+      display: isMobile ? "block" : "flex",
       position: "relative",
       overflow: "hidden"
     }}>

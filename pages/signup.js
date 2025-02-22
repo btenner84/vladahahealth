@@ -2,7 +2,7 @@ import { auth, provider } from '../firebase';
 import { signInWithPopup, createUserWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { theme } from '../styles/theme';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -15,6 +15,24 @@ export default function Signup() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [passwordStrength, setPasswordStrength] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    if (typeof window !== 'undefined') {
+      handleResize();
+      window.addEventListener('resize', handleResize);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+    };
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -145,7 +163,7 @@ export default function Signup() {
       background: theme.colors.bgPrimary,
       fontFamily: "Inter, system-ui, sans-serif",
       color: theme.colors.textPrimary,
-      display: "flex",
+      display: isMobile ? "block" : "flex",
       position: "relative",
       overflow: "hidden"
     }}>
@@ -161,7 +179,7 @@ export default function Signup() {
       {/* Left Panel - Info */}
       <div style={{
         flex: "1",
-        padding: "4rem",
+        padding: isMobile ? "2rem 1rem" : "4rem",
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
@@ -182,7 +200,7 @@ export default function Signup() {
 
         <div style={{maxWidth: "500px"}}>
           <h1 style={{
-            fontSize: "3.5rem",
+            fontSize: isMobile ? "2.5rem" : "3.5rem",
             fontWeight: "800",
             marginBottom: "1.5rem",
             background: theme.colors.gradientPrimary,
@@ -241,7 +259,7 @@ export default function Signup() {
       {/* Right Panel - Sign Up Form */}
       <div style={{
         flex: "1",
-        padding: "4rem",
+        padding: isMobile ? "2rem 1rem" : "4rem",
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
