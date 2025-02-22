@@ -226,7 +226,7 @@ export default function ProfileSetup() {
       minHeight: "100vh",
       background: theme.colors.bgPrimary,
       color: theme.colors.textPrimary,
-      padding: "1rem"
+      padding: isMobile ? "1rem" : "2rem"
     }}>
       <div style={{
         maxWidth: "800px",
@@ -237,9 +237,9 @@ export default function ProfileSetup() {
         boxShadow: theme.shadows.glow
       }}>
         <h1 style={{
-          fontSize: "2rem",
+          fontSize: isMobile ? "1.5rem" : "2rem",
           fontWeight: "700",
-          marginBottom: "2rem",
+          marginBottom: isMobile ? "1.5rem" : "2rem",
           background: theme.colors.gradientPrimary,
           WebkitBackgroundClip: "text",
           WebkitTextFillColor: "transparent"
@@ -247,13 +247,19 @@ export default function ProfileSetup() {
 
         <form onSubmit={handleSubmit}>
           {/* Location Section */}
-          <section style={{ marginBottom: "2rem" }}>
+          <section style={{ 
+            marginBottom: isMobile ? "1.5rem" : "2rem" 
+          }}>
             <h2 style={{
               fontSize: "1.5rem",
               marginBottom: "1rem",
               color: theme.colors.textPrimary
             }}>Location</h2>
-            <div style={{ display: "grid", gap: "1rem" }}>
+            <div style={{ 
+              display: "grid", 
+              gap: isMobile ? "0.75rem" : "1rem",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" 
+            }}>
               <div>
                 <label style={{ display: "block", marginBottom: "0.5rem" }}>
                   State

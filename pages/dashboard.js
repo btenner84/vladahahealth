@@ -11,6 +11,7 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -34,7 +35,22 @@ export default function Dashboard() {
       setIsLoading(false);
     });
 
-    return () => unsubscribe();
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    // Initial check
+    if (typeof window !== 'undefined') {
+      handleResize();
+      window.addEventListener('resize', handleResize);
+    }
+
+    return () => {
+      unsubscribe();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+    };
   }, [router]);
 
   const ProfileSection = () => (
@@ -112,7 +128,7 @@ export default function Dashboard() {
       <nav style={{
         background: theme.colors.bgSecondary,
         borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-        padding: "1.2rem 2rem",
+        padding: isMobile ? "1rem" : "1.2rem 2rem",
         position: "fixed",
         top: 0,
         left: 0,
@@ -124,7 +140,8 @@ export default function Dashboard() {
           margin: "0 auto",
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center"
+          alignItems: "center",
+          padding: isMobile ? "0 1rem" : 0
         }}>
           <Link href="/" style={{
             fontSize: "1.5rem",
@@ -173,7 +190,7 @@ export default function Dashboard() {
       <main style={{
         maxWidth: "1200px",
         margin: "0 auto",
-        padding: "7rem 2rem 2rem",
+        padding: isMobile ? "5rem 1rem 1rem" : "7rem 2rem 2rem",
       }}>
         <ProfileSection />
         {/* Welcome Section */}
@@ -202,8 +219,10 @@ export default function Dashboard() {
         {/* Actions Grid */}
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-          gap: "2rem",
+          gridTemplateColumns: isMobile 
+            ? "1fr" 
+            : "repeat(auto-fit, minmax(300px, 1fr))",
+          gap: isMobile ? "1rem" : "2rem",
           marginBottom: "3rem"
         }}>
           {[
