@@ -1,0 +1,37 @@
+{
+  "name": "testproject",
+  "version": "1.0.0",
+  "description": "VladaHealth - AI-powered healthcare control",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@firebase/app": "^0.11.1",
+    "@firebase/auth": "^1.9.0",
+    "@firebase/firestore": "^4.7.8",
+    "@firebase/storage": "^0.13.6",
+    "firebase": "^10.14.1",
+    "next": "^14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/btenner84/testproject.git"
+  },
+  "keywords": [
+    "Next.js",
+    "React",
+    "Firebase",
+    "Healthcare"
+  ],
+  "author": "Ben Tenner",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/btenner84/testproject/issues"
+  },
+  "homepage": "https://github.com/btenner84/testproject#readme"
+}
