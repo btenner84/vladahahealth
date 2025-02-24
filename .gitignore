@@ -44,3 +44,7 @@ cors.json
 # IDE
 .idea/
 .vscode/
+
+# Old deployment URLs
+# testproject-git-main-ben-tenners-projects.vercel.app
+# testproject-khibgtc5j-ben-tenners-projects.vercel.app
