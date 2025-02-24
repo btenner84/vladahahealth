@@ -172,7 +172,7 @@ export default function ProfileSetup() {
       }
 
       // 2. Prepare data
-      const profileData = {
+      const userProfileData = {
         location: {
           state: formData.location.state,
           zipCode: formData.location.zipCode
@@ -184,11 +184,12 @@ export default function ProfileSetup() {
           hasSecondaryInsurance: formData.insurance.hasSecondaryInsurance,
           secondaryProvider: formData.insurance.secondaryProvider
         },
+        bills: [],
         updatedAt: new Date().toISOString(),
         email: user.email
       };
 
-      console.log('Saving profile data:', profileData);
+      console.log('Saving profile data:', userProfileData);
       setSaveStatus('Preparing to save...');
 
       // 3. Save to Firestore
@@ -197,7 +198,7 @@ export default function ProfileSetup() {
         console.log('Profile reference created');
         setSaveStatus('Saving to database...');
         
-        await setDoc(profileRef, profileData);
+        await setDoc(profileRef, userProfileData);
         console.log('Profile saved successfully');
         setSaveStatus('Save successful!');
 

@@ -1,5 +1,5 @@
 import { auth, provider } from '../firebase';
-import { signInWithPopup, signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
@@ -33,6 +33,16 @@ export default function SignIn() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        router.push('/dashboard');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router]);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
@@ -43,30 +53,75 @@ export default function SignIn() {
 
   const signInWithEmail = async (e) => {
     e.preventDefault();
+    console.log('Attempting sign in with:', formData);
     setIsLoading(true);
     setError('');
 
     try {
-      await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+      console.log('Sign in successful:', userCredential.user);
       router.push('/dashboard');
     } catch (error) {
-      setError('Invalid email or password');
+      console.error('Sign in error:', error);
+      setError(
+        error.code === 'auth/invalid-credential'
+          ? 'Invalid email or password'
+          : 'An error occurred during sign in'
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   const signInWithGoogle = async () => {
+    console.log('Attempting Google sign in');
     setIsLoading(true);
     setError('');
+    
     try {
-      await signInWithPopup(auth, provider);
-      router.push('/dashboard');
+      // Configure Google provider with additional settings
+      provider.setCustomParameters({
+        prompt: 'select_account',
+        login_hint: 'user@example.com'
+      });
+      
+      // Add more detailed error logging
+      try {
+        const result = await signInWithPopup(auth, provider);
+        console.log('Google sign in successful:', result.user);
+        router.push('/dashboard');
+      } catch (popupError) {
+        console.error('Popup error details:', {
+          code: popupError.code,
+          message: popupError.message,
+          email: popupError.email,
+          credential: popupError.credential
+        });
+        throw popupError;
+      }
     } catch (error) {
-      setError('Failed to sign in with Google');
+      console.error('Google sign in error:', error);
+      // More specific error messages
+      let errorMessage = 'Failed to sign in with Google. Please try again.';
+      if (error.code === 'auth/popup-blocked') {
+        errorMessage = 'Pop-up was blocked by your browser. Please enable pop-ups and try again.';
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Sign-in was cancelled. Please try again.';
+      } else if (error.code === 'auth/unauthorized-domain') {
+        errorMessage = 'This domain is not authorized for Google sign-in. Please contact support.';
+      }
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSignUpClick = () => {
+    router.push('/signup');
   };
 
   return (
@@ -85,7 +140,8 @@ export default function SignIn() {
         width: "100%",
         height: "100%",
         background: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%230EA5E9' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-        opacity: 0.5
+        opacity: 0.5,
+        zIndex: 1
       }}/>
 
       {/* Left Panel - Info */}
@@ -137,7 +193,9 @@ export default function SignIn() {
         flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
-        background: theme.colors.bgSecondary
+        background: theme.colors.bgSecondary,
+        position: "relative",
+        zIndex: 2
       }}>
         <div style={{
           width: "100%",
@@ -150,14 +208,15 @@ export default function SignIn() {
             textAlign: "center"
           }}>Sign In</h2>
 
-          <form onSubmit={signInWithEmail}>
-            <div style={{marginBottom: "1.5rem"}}>
+          <form onSubmit={signInWithEmail} style={{ position: "relative", zIndex: 1 }}>
+            <div style={{ marginBottom: "1.5rem" }}>
               <input
                 type="email"
                 name="email"
-                placeholder="Email"
                 value={formData.email}
                 onChange={handleInputChange}
+                placeholder="Email"
+                required
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -167,17 +226,17 @@ export default function SignIn() {
                   color: theme.colors.textPrimary,
                   fontSize: "1rem"
                 }}
-                required
               />
             </div>
 
-            <div style={{marginBottom: "1.5rem"}}>
+            <div style={{ marginBottom: "1.5rem" }}>
               <input
                 type="password"
                 name="password"
-                placeholder="Password"
                 value={formData.password}
                 onChange={handleInputChange}
+                placeholder="Password"
+                required
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -187,7 +246,6 @@ export default function SignIn() {
                   color: theme.colors.textPrimary,
                   fontSize: "1rem"
                 }}
-                required
               />
             </div>
 
@@ -216,8 +274,8 @@ export default function SignIn() {
                 color: theme.colors.textPrimary,
                 fontSize: "1rem",
                 fontWeight: "600",
-                cursor: "pointer",
-                marginBottom: "1rem"
+                cursor: isLoading ? "not-allowed" : "pointer",
+                opacity: isLoading ? 0.7 : 1
               }}
             >
               {isLoading ? (
@@ -248,30 +306,45 @@ export default function SignIn() {
           </div>
 
           <button
-            onClick={signInWithGoogle}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              signInWithGoogle();
+            }}
             disabled={isLoading}
             style={{
               width: "100%",
               padding: "1rem",
-              background: "transparent",
-              border: `1px solid ${theme.colors.primary}`,
+              background: "white",
+              border: "none",
               borderRadius: theme.borderRadius.md,
-              color: theme.colors.primary,
+              color: "#333",
               fontSize: "1rem",
               fontWeight: "600",
-              cursor: "pointer",
+              cursor: isLoading ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "0.5rem"
+              gap: "0.5rem",
+              opacity: isLoading ? 0.7 : 1,
+              transition: "all 0.3s ease",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+              '&:hover': {
+                boxShadow: "0 4px 8px rgba(0,0,0,0.2)"
+              },
+              position: "relative",
+              zIndex: 2
             }}
           >
             <img
               src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg"
               alt="Google logo"
-              style={{width: "20px", height: "20px"}}
+              style={{
+                width: "20px",
+                height: "20px"
+              }}
             />
-            Sign in with Google
+            {isLoading ? "Signing in..." : "Sign in with Google"}
           </button>
 
           <p style={{
@@ -280,13 +353,31 @@ export default function SignIn() {
             color: theme.colors.textSecondary
           }}>
             Don't have an account?{' '}
-            <Link href="/signup" style={{
-              color: theme.colors.primary,
-              textDecoration: "none",
-              fontWeight: "500"
-            }}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                handleSignUpClick();
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: theme.colors.primary,
+                textDecoration: "none",
+                fontWeight: "500",
+                cursor: "pointer",
+                display: "inline",
+                fontSize: "inherit",
+                position: "relative",
+                zIndex: 2,
+                '&:hover': {
+                  textDecoration: "underline"
+                }
+              }}
+            >
               Sign up
-            </Link>
+            </button>
           </p>
         </div>
       </div>
