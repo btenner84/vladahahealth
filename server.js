@@ -14,9 +14,7 @@ app.use(express.json());
 
 // Configure multer for file uploads
 const upload = multer({ 
-  dest: process.env.NODE_ENV === 'production' 
-    ? '/tmp/uploads/' // Use /tmp in production (Vercel)
-    : 'uploads/' // Use local directory in development
+  storage: multer.memoryStorage()
 });
 
 // Also make sure the directory exists
@@ -66,6 +64,12 @@ const auditLog = async (req, action, userId, resourceId, status, details) => {
 // Simple file upload endpoint
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
+    console.log('Upload request received:', {
+      hasFile: !!req.file,
+      userId: req.body.userId,
+      fileName: req.body.fileName
+    });
+    
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -77,9 +81,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     console.log(`Uploading file to ${destination}`);
     
-    // Upload file to Firebase Storage
-    await bucket.upload(req.file.path, {
-      destination,
+    // Upload file to Firebase Storage using buffer
+    await bucket.file(destination).save(req.file.buffer, {
       metadata: {
         contentType: req.file.mimetype,
         metadata: {
@@ -96,9 +99,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       expires: '03-01-2500' // Far future expiration
     });
     
-    // Clean up the temporary file
-    fs.unlinkSync(req.file.path);
-    
     res.json({ 
       success: true, 
       downloadURL: url,
@@ -109,7 +109,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Upload error:', error);
+    console.error('Upload error details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
     res.status(500).json({ error: error.message });
   }
 });
