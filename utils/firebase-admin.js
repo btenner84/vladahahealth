@@ -53,11 +53,28 @@ function initializeFirebaseAdmin() {
       throw new Error('Missing required Firebase configuration. Check environment variables.');
     }
     
+    // Extract the key content without headers and footers
+    let keyContent = privateKey;
+    
+    // Remove headers and footers if present
+    if (keyContent.includes('-----BEGIN PRIVATE KEY-----')) {
+      keyContent = keyContent.replace(/-----BEGIN PRIVATE KEY-----/, '');
+    }
+    if (keyContent.includes('-----END PRIVATE KEY-----')) {
+      keyContent = keyContent.replace(/-----END PRIVATE KEY-----/, '');
+    }
+    
+    // Remove all whitespace, newlines, etc.
+    keyContent = keyContent.replace(/\s/g, '');
+    
     // Create a properly formatted private key with explicit structure
     // This is a more direct approach to ensure the key has the right format
-    const formattedKey = `-----BEGIN PRIVATE KEY-----
-${privateKey.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, '')}
------END PRIVATE KEY-----`;
+    const formattedKey = `-----BEGIN PRIVATE KEY-----\n${
+      // Split the key into 64-character chunks and join with newlines
+      keyContent.match(/.{1,64}/g).join('\n')
+    }\n-----END PRIVATE KEY-----\n`;
+    
+    logger.info('firebase-admin', 'Private key formatted with proper PEM structure');
     
     // Initialize the app
     admin.initializeApp({
