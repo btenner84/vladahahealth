@@ -26,7 +26,8 @@ export default function ProfileSetup() {
     demographics: {
       ageRange: '',
       preExistingConditions: []
-    }
+    },
+    aboutMe: ''
   });
 
   const [isMobile, setIsMobile] = useState(false);
@@ -184,6 +185,7 @@ export default function ProfileSetup() {
           hasSecondaryInsurance: formData.insurance.hasSecondaryInsurance,
           secondaryProvider: formData.insurance.secondaryProvider
         },
+        aboutMe: formData.aboutMe,
         bills: [],
         updatedAt: new Date().toISOString(),
         email: user.email
@@ -370,6 +372,37 @@ export default function ProfileSetup() {
                   />
                 </div>
               )}
+            </div>
+          </section>
+
+          {/* About Me Section */}
+          <section style={{ marginBottom: "2rem" }}>
+            <h2 style={{
+              fontSize: "1.5rem",
+              marginBottom: "1rem",
+              color: theme.colors.textPrimary
+            }}>About You</h2>
+            <div>
+              <label style={{ display: "block", marginBottom: "0.5rem" }}>
+                Tell us more about yourself (optional)
+              </label>
+              <textarea
+                name="aboutMe"
+                value={formData.aboutMe}
+                onChange={handleInputChange}
+                placeholder="Share anything that might help us better understand your healthcare needs..."
+                style={{
+                  width: "100%",
+                  minHeight: "120px",
+                  padding: "0.75rem",
+                  background: "rgba(255, 255, 255, 0.05)",
+                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                  borderRadius: theme.borderRadius.md,
+                  color: theme.colors.textPrimary,
+                  resize: "vertical",
+                  fontFamily: "inherit"
+                }}
+              />
             </div>
           </section>
 
