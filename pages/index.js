@@ -143,7 +143,7 @@ export default function Home() {
             justifyContent: 'center',
             marginBottom: '4rem'
           }}>
-            <a href="/signup" style={{textDecoration: 'none'}}>
+            <Link href="/signup" style={{textDecoration: 'none'}}>
               <button style={{
                 padding: "1.25rem 2.5rem",
                 fontSize: "1.1rem",
@@ -160,9 +160,15 @@ export default function Home() {
                   boxShadow: theme.shadows.hover
                 }
               }}>Start Fighting Back</button>
-            </a>
-            <a href="#how-it-works" style={{textDecoration: 'none'}}>
-              <button style={{
+            </Link>
+            <button 
+              onClick={() => {
+                const howItWorks = document.getElementById('how-it-works');
+                if (howItWorks) {
+                  howItWorks.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
+              style={{
                 padding: "1.25rem 2.5rem",
                 fontSize: "1.1rem",
                 fontWeight: "600",
@@ -173,7 +179,6 @@ export default function Home() {
                 cursor: "pointer",
                 transition: "all 0.3s ease"
               }}>Learn More</button>
-            </a>
           </div>
 
           {/* Stats Section */}
