@@ -219,7 +219,7 @@ export default function Dashboard() {
       console.log('Uploading file via proxy server...');
       
       // Update the fetch URL based on the environment
-      const uploadUrl = '/upload';  // Always use relative URL in production
+      const uploadUrl = '/api/upload';
       
       // Upload to our proxy server
       const response = await fetch(uploadUrl, {
