@@ -4,8 +4,7 @@ import { auth } from '../firebase';
 import { theme } from '../styles/theme';
 import Link from 'next/link';
 import { doc, getDoc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
-import { db, storage } from '../firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 
 export default function Dashboard() {
@@ -25,6 +24,7 @@ export default function Dashboard() {
   const [analyzingBill, setAnalyzingBill] = useState(false);
   const [recentAnalyses, setRecentAnalyses] = useState([]);
   const [recentDisputes, setRecentDisputes] = useState([]);
+  const [consentGiven, setConsentGiven] = useState(false);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -67,7 +67,7 @@ export default function Dashboard() {
   }, [router]);
 
   const UserAvatar = ({ email }) => (
-    <div style={{
+    <Link href="/profile" style={{
       width: "40px",
       height: "40px",
       borderRadius: "50%",
@@ -78,10 +78,11 @@ export default function Dashboard() {
       fontSize: "1.2rem",
       fontWeight: "600",
       color: theme.colors.textPrimary,
-      cursor: "pointer"
+      cursor: "pointer",
+      textDecoration: "none"
     }}>
       {email ? email[0].toUpperCase() : 'U'}
-    </div>
+    </Link>
   );
 
   const ProcessStep = ({ number, title, description }) => (
@@ -209,52 +210,53 @@ export default function Dashboard() {
     });
 
     try {
-      const timestamp = Date.now();
-      const storageRef = ref(storage, `bills/${user.uid}/${timestamp}_${fileName}`);
-      console.log('Created storage reference:', storageRef.fullPath);
+      // Create form data for the file upload
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('userId', user.uid);
+      formData.append('fileName', fileName);
       
-      // Add metadata
-      const metadata = {
-        contentType: selectedFile.type,
-        customMetadata: {
-          userId: user.uid,
-          fileName: fileName,
-          timestamp: timestamp.toString()
-        }
-      };
-
-      console.log('Starting file upload to Storage...');
-      const snapshot = await uploadBytes(storageRef, selectedFile, metadata);
-      console.log('File uploaded to Storage:', snapshot.ref.fullPath);
+      console.log('Uploading file via proxy server...');
       
-      // Get download URL
-      console.log('Getting download URL...');
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      console.log('Got download URL:', downloadURL);
+      // Update the fetch URL based on the environment
+      const uploadUrl = process.env.NODE_ENV === 'production' 
+        ? '/upload'  // This will be handled by Vercel routing
+        : 'http://localhost:3001/upload';
       
-      // Save to Firestore
-      console.log('Saving metadata to Firestore...');
+      // Upload to our proxy server
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('File uploaded successfully:', data);
+      
+      // Continue with Firestore updates
       const billDocRef = await addDoc(collection(db, 'bills'), {
         userId: user.uid,
         fileName: fileName,
         originalName: selectedFile.name,
-        fileUrl: downloadURL,
+        fileUrl: data.downloadURL,
         uploadedAt: serverTimestamp(),
         status: 'pending_analysis',
-        timestamp: timestamp,
-        fileType: selectedFile.type,
-        fileSize: selectedFile.size
+        timestamp: data.timestamp,
+        fileType: data.fileType,
+        fileSize: data.fileSize
       });
       console.log('Saved to Firestore with ID:', billDocRef.id);
 
       // Update user profile
-      console.log('Updating user profile...');
       const userProfileRef = doc(db, 'userProfiles', user.uid);
       await updateDoc(userProfileRef, {
         bills: arrayUnion({
           billId: billDocRef.id,
           fileName: fileName,
-          uploadedAt: timestamp,
+          uploadedAt: data.timestamp,
           status: 'pending_analysis'
         })
       });
@@ -266,7 +268,7 @@ export default function Dashboard() {
         fileName,
         uploadedAt: new Date().toLocaleString(),
         status: 'pending_analysis',
-        fileUrl: downloadURL
+        fileUrl: data.downloadURL
       };
 
       setRecentUploads(prev => [newUpload, ...prev].slice(0, 5));
