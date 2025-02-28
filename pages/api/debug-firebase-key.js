@@ -12,6 +12,7 @@ export default async function handler(req, res) {
     // Check for private keys
     const hasRegularKey = !!process.env.FIREBASE_PRIVATE_KEY;
     const hasBase64Key = !!process.env.FIREBASE_PRIVATE_KEY_BASE64;
+    const hasServiceAccountJson = !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
     
     // Process regular key if available
     let regularKeyInfo = { available: hasRegularKey };
@@ -116,6 +117,47 @@ export default async function handler(req, res) {
       }
     }
     
+    // Process service account JSON if available
+    let serviceAccountInfo = { available: hasServiceAccountJson };
+    if (hasServiceAccountJson) {
+      try {
+        const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+        serviceAccountInfo.length = serviceAccountJson.length;
+        
+        // Try to parse the JSON
+        try {
+          const serviceAccount = JSON.parse(serviceAccountJson);
+          serviceAccountInfo.parseSuccess = true;
+          serviceAccountInfo.hasProjectId = !!serviceAccount.project_id;
+          serviceAccountInfo.hasClientEmail = !!serviceAccount.client_email;
+          serviceAccountInfo.hasPrivateKey = !!serviceAccount.private_key;
+          
+          if (serviceAccount.private_key) {
+            serviceAccountInfo.privateKeyLength = serviceAccount.private_key.length;
+            serviceAccountInfo.privateKeyContainsBeginMarker = serviceAccount.private_key.includes('BEGIN PRIVATE KEY');
+            serviceAccountInfo.privateKeyContainsEndMarker = serviceAccount.private_key.includes('END PRIVATE KEY');
+            serviceAccountInfo.privateKeyContainsNewlines = serviceAccount.private_key.includes('\n');
+          }
+        } catch (parseError) {
+          serviceAccountInfo.parseSuccess = false;
+          serviceAccountInfo.parseError = parseError.message;
+        }
+      } catch (error) {
+        serviceAccountInfo.error = error.message;
+      }
+    }
+    
+    // Try to initialize Firebase Admin with each method
+    let initializationTests = {
+      regularKey: { tested: false },
+      base64Key: { tested: false },
+      serviceAccountJson: { tested: false },
+      applicationDefault: { tested: false }
+    };
+    
+    // We won't actually initialize Firebase here to avoid conflicts,
+    // but we'll simulate the initialization process to check for errors
+    
     // Return diagnostic information
     res.status(200).json({
       environment: process.env.NODE_ENV,
@@ -124,6 +166,7 @@ export default async function handler(req, res) {
       storageBucket,
       regularKey: regularKeyInfo,
       base64Key: base64KeyInfo,
+      serviceAccount: serviceAccountInfo,
       message: 'Firebase key diagnostic information',
     });
   } catch (error) {

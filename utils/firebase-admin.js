@@ -1,6 +1,9 @@
 import admin from 'firebase-admin';
 import logger from './logger';
 
+// Track initialization status
+let isInitialized = false;
+
 // Initialize Firebase Admin SDK
 function initializeFirebaseAdmin() {
   if (admin.apps.length) {
@@ -21,69 +24,140 @@ function initializeFirebaseAdmin() {
       throw new Error('Missing required Firebase configuration. Check environment variables.');
     }
     
-    // Get private key - try different formats
-    let privateKey;
+    // APPROACH 1: Try to initialize with JSON credentials directly
+    try {
+      // Check if we have a service account JSON
+      if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+        logger.info('firebase-admin', 'Using service account JSON');
+        
+        // Parse the JSON string to an object
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+        
+        // Initialize with the service account
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount),
+          storageBucket
+        });
+        
+        isInitialized = true;
+        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with service account JSON', {
+          projectId,
+          clientEmail,
+          storageBucket
+        });
+        
+        return admin;
+      }
+    } catch (jsonError) {
+      logger.error('firebase-admin', 'Error initializing with service account JSON', jsonError);
+      // Continue to next approach
+    }
     
-    // Try base64 first
-    if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
-      try {
-        const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
-        privateKey = buffer.toString('utf8');
+    // APPROACH 2: Try to initialize with environment variables directly
+    try {
+      if (!isInitialized && process.env.FIREBASE_PRIVATE_KEY) {
+        logger.info('firebase-admin', 'Using environment variables directly');
+        
+        // Get the private key
+        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        
+        // Remove quotes if present
+        if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+          privateKey = privateKey.slice(1, -1);
+        }
+        
+        // Replace literal \n with actual newlines
+        if (privateKey.includes('\\n')) {
+          privateKey = privateKey.replace(/\\n/g, '\n');
+        }
+        
+        // Initialize the app
+        admin.initializeApp({
+          credential: admin.credential.cert({
+            projectId,
+            clientEmail,
+            privateKey
+          }),
+          storageBucket
+        });
+        
+        isInitialized = true;
+        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with environment variables', {
+          projectId,
+          clientEmail,
+          privateKeyLength: privateKey.length,
+          storageBucket
+        });
+        
+        return admin;
+      }
+    } catch (envError) {
+      logger.error('firebase-admin', 'Error initializing with environment variables', envError);
+      // Continue to next approach
+    }
+    
+    // APPROACH 3: Try to initialize with base64 encoded key
+    try {
+      if (!isInitialized && process.env.FIREBASE_PRIVATE_KEY_BASE64) {
         logger.info('firebase-admin', 'Using base64 decoded private key');
-      } catch (error) {
-        logger.error('firebase-admin', 'Error decoding base64 key', error);
+        
+        // Decode the base64 key
+        const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
+        const privateKey = buffer.toString('utf8');
+        
+        // Initialize the app
+        admin.initializeApp({
+          credential: admin.credential.cert({
+            projectId,
+            clientEmail,
+            privateKey
+          }),
+          storageBucket
+        });
+        
+        isInitialized = true;
+        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with base64 key', {
+          projectId,
+          clientEmail,
+          privateKeyLength: privateKey.length,
+          storageBucket
+        });
+        
+        return admin;
       }
+    } catch (base64Error) {
+      logger.error('firebase-admin', 'Error initializing with base64 key', base64Error);
+      // Continue to next approach
     }
     
-    // Fall back to regular key if base64 failed
-    if (!privateKey && process.env.FIREBASE_PRIVATE_KEY) {
-      privateKey = process.env.FIREBASE_PRIVATE_KEY;
-      logger.info('firebase-admin', 'Using regular private key');
-      
-      // Remove quotes if present
-      if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-        privateKey = privateKey.slice(1, -1);
-        logger.info('firebase-admin', 'Removed surrounding quotes from private key');
+    // APPROACH 4: Try to initialize with application default credentials
+    try {
+      if (!isInitialized) {
+        logger.info('firebase-admin', 'Attempting to use application default credentials');
+        
+        // Initialize with application default credentials
+        admin.initializeApp({
+          credential: admin.credential.applicationDefault(),
+          projectId,
+          storageBucket
+        });
+        
+        isInitialized = true;
+        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with application default credentials', {
+          projectId,
+          storageBucket
+        });
+        
+        return admin;
       }
-      
-      // Replace literal \n with actual newlines
-      if (privateKey.includes('\\n')) {
-        privateKey = privateKey.replace(/\\n/g, '\n');
-        logger.info('firebase-admin', 'Replaced \\n with actual newlines in private key');
-      }
+    } catch (defaultError) {
+      logger.error('firebase-admin', 'Error initializing with application default credentials', defaultError);
+      // This is our last attempt, so we'll throw an error
+      throw new Error('All Firebase initialization methods failed. Check logs for details.');
     }
     
-    if (!privateKey) {
-      throw new Error('No valid private key found. Check environment variables.');
-    }
-    
-    // Initialize with a credential object directly
-    const credential = {
-      projectId,
-      clientEmail,
-      privateKey
-    };
-    
-    logger.info('firebase-admin', 'Initializing Firebase Admin with credential object', {
-      projectId,
-      clientEmail,
-      privateKeyLength: privateKey.length
-    });
-    
-    // Initialize the app
-    admin.initializeApp({
-      credential: admin.credential.cert(credential),
-      storageBucket
-    });
-    
-    logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully', {
-      projectId,
-      clientEmail,
-      privateKeyLength: privateKey.length,
-      storageBucket
-    });
-    
-    return admin;
+    // If we get here, no initialization method worked
+    throw new Error('No valid Firebase initialization method available. Check environment variables.');
   } catch (error) {
     logger.error('firebase-admin', 'Firebase initialization error', error);
     throw error;
