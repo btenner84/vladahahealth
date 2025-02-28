@@ -1,23 +1,29 @@
 import multer from 'multer';
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getStorage } from 'firebase-admin/storage';
-import { getFirestore } from 'firebase-admin/firestore';
 import nextConnect from 'next-connect';
+import admin from 'firebase-admin';
 
 // Initialize Firebase Admin if not already initialized
-let admin;
-try {
-  admin = require('firebase-admin');
-} catch (e) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  admin = initializeApp({
-    credential: cert(serviceAccount),
-    storageBucket: 'vladahealth-b2a00.firebasestorage.app'
-  });
+let firebaseAdmin;
+if (!admin.apps.length) {
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
+    firebaseAdmin = admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      storageBucket: 'vladahealth-b2a00.appspot.com'
+    });
+    console.log('Firebase Admin initialized in API route');
+  } catch (error) {
+    console.error('Firebase Admin initialization error:', error);
+    throw error;
+  }
+} else {
+  firebaseAdmin = admin.app();
+  console.log('Using existing Firebase Admin app');
 }
 
-const bucket = getStorage().bucket();
-const db = getFirestore();
+// Get storage bucket
+const bucket = admin.storage().bucket();
+const db = admin.firestore();
 
 // Configure multer
 const upload = multer({
@@ -27,6 +33,7 @@ const upload = multer({
 // Create API route handler
 const apiRoute = nextConnect({
   onError(error, req, res) {
+    console.error('API route error:', error);
     res.status(501).json({ error: `Sorry something went wrong! ${error.message}` });
   },
   onNoMatch(req, res) {

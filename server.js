@@ -25,19 +25,29 @@ const upload = multer({
 });
 
 // Initialize Firebase Admin
-let serviceAccount;
-if (process.env.NODE_ENV === 'production') {
-  // In production, use environment variable
-  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+if (!admin.apps.length) {
+  let serviceAccount;
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      // In production, use environment variable
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
+    } else {
+      // In development, use local file
+      serviceAccount = require('./serviceAccountKey.json');
+    }
+    
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      storageBucket: 'vladahealth-b2a00.appspot.com'
+    });
+    console.log('Firebase Admin initialized in server.js');
+  } catch (error) {
+    console.error('Firebase Admin initialization error:', error);
+    throw error;
+  }
 } else {
-  // In development, use local file
-  serviceAccount = require('./serviceAccountKey.json');
+  console.log('Using existing Firebase Admin app in server.js');
 }
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  storageBucket: 'vladahealth-b2a00.firebasestorage.app'
-});
 
 const bucket = admin.storage().bucket();
 
