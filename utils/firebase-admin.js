@@ -53,28 +53,38 @@ function initializeFirebaseAdmin() {
       throw new Error('Missing required Firebase configuration. Check environment variables.');
     }
     
-    // Extract the key content without headers and footers
-    let keyContent = privateKey;
+    // Normalize the private key to a standard format regardless of input
+    let formattedKey;
     
-    // Remove headers and footers if present
-    if (keyContent.includes('-----BEGIN PRIVATE KEY-----')) {
-      keyContent = keyContent.replace(/-----BEGIN PRIVATE KEY-----/, '');
+    try {
+      // First, strip any existing headers and footers
+      let keyContent = privateKey;
+      keyContent = keyContent.replace(/-----BEGIN PRIVATE KEY-----/g, '');
+      keyContent = keyContent.replace(/-----END PRIVATE KEY-----/g, '');
+      
+      // Remove all whitespace, newlines, etc.
+      keyContent = keyContent.replace(/\s/g, '');
+      
+      // Create a properly formatted private key with explicit structure
+      formattedKey = `-----BEGIN PRIVATE KEY-----\n${
+        // Split the key into 64-character chunks and join with newlines
+        keyContent.match(/.{1,64}/g).join('\n')
+      }\n-----END PRIVATE KEY-----\n`;
+      
+      logger.info('firebase-admin', 'Private key formatted with proper PEM structure');
+    } catch (error) {
+      logger.error('firebase-admin', 'Error formatting private key', error);
+      throw new Error('Failed to format private key correctly: ' + error.message);
     }
-    if (keyContent.includes('-----END PRIVATE KEY-----')) {
-      keyContent = keyContent.replace(/-----END PRIVATE KEY-----/, '');
-    }
     
-    // Remove all whitespace, newlines, etc.
-    keyContent = keyContent.replace(/\s/g, '');
-    
-    // Create a properly formatted private key with explicit structure
-    // This is a more direct approach to ensure the key has the right format
-    const formattedKey = `-----BEGIN PRIVATE KEY-----\n${
-      // Split the key into 64-character chunks and join with newlines
-      keyContent.match(/.{1,64}/g).join('\n')
-    }\n-----END PRIVATE KEY-----\n`;
-    
-    logger.info('firebase-admin', 'Private key formatted with proper PEM structure');
+    // Log key details for debugging (without exposing the actual key)
+    logger.info('firebase-admin', 'Private key details', {
+      length: formattedKey.length,
+      startsWithHeader: formattedKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+      endsWithFooter: formattedKey.endsWith('-----END PRIVATE KEY-----\n'),
+      containsNewlines: formattedKey.includes('\n'),
+      newlineCount: (formattedKey.match(/\n/g) || []).length
+    });
     
     // Initialize the app
     admin.initializeApp({
