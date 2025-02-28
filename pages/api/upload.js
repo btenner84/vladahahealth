@@ -1,78 +1,45 @@
 import multer from 'multer';
 import nextConnect from 'next-connect';
-import admin from 'firebase-admin';
 import logger from '../../utils/logger';
-import { getBestAvailableKey } from '../../utils/firebase-key-helper';
+import { getFirebaseAdmin, getStorage } from '../../utils/firebase-admin';
 
-// Check if Firebase is already initialized
-if (!admin.apps.length) {
-  logger.info('upload', 'Initializing Firebase Admin in upload API');
-  
-  try {
-    // Get the best available private key using our helper
-    const privateKey = getBestAvailableKey();
-    
-    if (!privateKey) {
-      logger.error('upload', 'No valid private key found in environment variables');
-      throw new Error('No valid private key found in environment variables');
-    }
-    
-    // Initialize Firebase with environment variables
-    const config = {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: privateKey,
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-    };
-    
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: config.projectId,
-        clientEmail: config.clientEmail,
-        privateKey: config.privateKey
-      }),
-      storageBucket: config.storageBucket
-    });
-    
-    logger.firebaseInit('upload', 'Firebase Admin initialized successfully in upload API', {
-      projectId: config.projectId,
-      clientEmail: config.clientEmail,
-      privateKeyLength: config.privateKey ? config.privateKey.length : 0,
-      storageBucket: config.storageBucket
-    });
-  } catch (error) {
-    logger.error('upload', 'Firebase initialization error in upload API', error);
-  }
-}
-
-// Get the storage bucket
+// Initialize Firebase and get storage bucket
+let admin;
 let bucket;
+
 try {
-  bucket = admin.storage().bucket();
-  logger.info('upload', 'Storage bucket initialized in upload API', { bucketName: bucket.name });
+  admin = getFirebaseAdmin();
+  bucket = getStorage();
+  logger.info('upload', 'Firebase and Storage bucket initialized successfully');
 } catch (error) {
-  logger.error('upload', 'Error initializing storage bucket in upload API', error);
+  logger.error('upload', 'Error initializing Firebase or Storage bucket', error);
 }
 
 // Function to ensure bucket is initialized
 async function ensureBucket(req, res, next) {
   try {
     if (!bucket) {
-      logger.info('upload', 'Reinitializing storage bucket');
-      bucket = admin.storage().bucket();
+      logger.info('upload', 'Attempting to reinitialize storage bucket');
       
-      if (!bucket) {
-        logger.error('upload', 'Failed to initialize storage bucket');
-        return res.status(500).json({ error: 'Failed to initialize storage bucket' });
+      try {
+        bucket = getStorage();
+        logger.info('upload', 'Storage bucket reinitialized successfully', { bucketName: bucket.name });
+      } catch (error) {
+        logger.error('upload', 'Failed to reinitialize storage bucket', error);
+        return res.status(500).json({ 
+          error: 'Storage bucket initialization failed', 
+          message: error.message 
+        });
       }
-      
-      logger.info('upload', 'Storage bucket reinitialized', { bucketName: bucket.name });
     }
     
     next();
   } catch (error) {
     logger.error('upload', 'Error in ensureBucket middleware', error);
-    return res.status(500).json({ error: 'Storage bucket initialization failed', message: error.message });
+    return res.status(500).json({ 
+      error: 'Storage bucket initialization failed', 
+      message: error.message 
+    });
   }
 }
 

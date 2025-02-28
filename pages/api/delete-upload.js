@@ -1,56 +1,19 @@
-import admin from 'firebase-admin';
 import nextConnect from 'next-connect';
 import logger from '../../utils/logger';
-import { getBestAvailableKey } from '../../utils/firebase-key-helper';
+import { getFirebaseAdmin, getStorage, getFirestore } from '../../utils/firebase-admin';
 
-// Check if Firebase is already initialized
-if (!admin.apps.length) {
-  logger.info('delete-upload', 'Initializing Firebase Admin in delete-upload API');
-  
-  try {
-    // Get the best available private key using our helper
-    const privateKey = getBestAvailableKey();
-    
-    if (!privateKey) {
-      logger.error('delete-upload', 'No valid private key found in environment variables');
-      throw new Error('No valid private key found in environment variables');
-    }
-    
-    // Initialize Firebase with environment variables
-    const config = {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: privateKey,
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-    };
-    
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: config.projectId,
-        clientEmail: config.clientEmail,
-        privateKey: config.privateKey
-      }),
-      storageBucket: config.storageBucket
-    });
-    
-    logger.firebaseInit('delete-upload', 'Firebase Admin initialized successfully in delete-upload API', {
-      projectId: config.projectId,
-      clientEmail: config.clientEmail,
-      privateKeyLength: config.privateKey ? config.privateKey.length : 0,
-      storageBucket: config.storageBucket
-    });
-  } catch (error) {
-    logger.error('delete-upload', 'Firebase initialization error in delete-upload API', error);
-  }
-}
-
-// Get the storage bucket
+// Initialize Firebase and get storage bucket
+let admin;
 let bucket;
+let db;
+
 try {
-  bucket = admin.storage().bucket();
-  logger.info('delete-upload', 'Storage bucket initialized in delete-upload API', { bucketName: bucket.name });
+  admin = getFirebaseAdmin();
+  bucket = getStorage();
+  db = getFirestore();
+  logger.info('delete-upload', 'Firebase, Firestore, and Storage bucket initialized successfully');
 } catch (error) {
-  logger.error('delete-upload', 'Error initializing storage bucket in delete-upload API', error);
+  logger.error('delete-upload', 'Error initializing Firebase components', error);
 }
 
 // Create API route handler
@@ -82,13 +45,25 @@ apiRoute.delete(async (req, res) => {
       return res.status(400).json({ error: 'No user ID provided' });
     }
     
+    // Ensure we have Firebase components initialized
+    if (!admin || !bucket || !db) {
+      try {
+        admin = getFirebaseAdmin();
+        bucket = getStorage();
+        db = getFirestore();
+        logger.info('delete-upload', 'Firebase components reinitialized successfully');
+      } catch (initError) {
+        logger.error('delete-upload', 'Failed to initialize Firebase components', initError);
+        return res.status(500).json({ error: 'Firebase initialization failed', message: initError.message });
+      }
+    }
+    
     // Extract the file path from the URL
     const urlObj = new URL(fileUrl);
     const pathParts = urlObj.pathname.split('/');
     const fileName = pathParts[pathParts.length - 1];
     
     // Find the file in Firestore
-    const db = admin.firestore();
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     
@@ -159,47 +134,63 @@ apiRoute.post(async (req, res) => {
   try {
     const { userId, fileId, filePath } = req.body;
     
-    console.log('Delete request received via POST:', {
+    logger.info('delete-upload', 'Delete request received via POST', {
       userId,
       fileId,
       filePath
     });
     
     if (!userId || !fileId) {
+      logger.warn('delete-upload', 'Missing required parameters');
       return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    
+    // Ensure we have Firebase components initialized
+    if (!admin || !bucket || !db) {
+      try {
+        admin = getFirebaseAdmin();
+        bucket = getStorage();
+        db = getFirestore();
+        logger.info('delete-upload', 'Firebase components reinitialized successfully');
+      } catch (initError) {
+        logger.error('delete-upload', 'Failed to initialize Firebase components', initError);
+        return res.status(500).json({ error: 'Firebase initialization failed', message: initError.message });
+      }
     }
 
     // Verify user is authorized to delete this file
-    const billDoc = await admin.firestore().collection('bills').doc(fileId).get();
+    const billDoc = await db.collection('bills').doc(fileId).get();
     
     if (!billDoc.exists) {
+      logger.warn('delete-upload', 'File not found', { fileId });
       return res.status(404).json({ error: 'File not found' });
     }
     
     const billData = billDoc.data();
     
     if (billData.userId !== userId) {
+      logger.warn('delete-upload', 'Unauthorized to delete file', { userId, fileId });
       return res.status(403).json({ error: 'Unauthorized to delete this file' });
     }
     
     // Delete from Firestore
-    await admin.firestore().collection('bills').doc(fileId).delete();
-    console.log(`Deleted document ${fileId} from Firestore`);
+    await db.collection('bills').doc(fileId).delete();
+    logger.info('delete-upload', 'Deleted document from Firestore', { fileId });
     
     // Delete from Storage if filePath is provided
     if (filePath && bucket) {
       try {
         await bucket.file(filePath).delete();
-        console.log(`Deleted file ${filePath} from Storage`);
+        logger.info('delete-upload', 'Deleted file from Storage', { filePath });
       } catch (storageError) {
-        console.error('Error deleting from Storage:', storageError);
+        logger.error('delete-upload', 'Error deleting from Storage', storageError);
         // Continue even if Storage delete fails
       }
     }
     
     // Update user profile to remove the bill reference
     try {
-      const userProfileRef = admin.firestore().collection('userProfiles').doc(userId);
+      const userProfileRef = db.collection('userProfiles').doc(userId);
       const userProfile = await userProfileRef.get();
       
       if (userProfile.exists) {
@@ -207,22 +198,18 @@ apiRoute.post(async (req, res) => {
         if (userData.bills && Array.isArray(userData.bills)) {
           const updatedBills = userData.bills.filter(bill => bill.billId !== fileId);
           await userProfileRef.update({ bills: updatedBills });
-          console.log(`Updated user profile to remove bill ${fileId}`);
+          logger.info('delete-upload', 'Updated user profile to remove bill', { userId, fileId });
         }
       }
     } catch (profileError) {
-      console.error('Error updating user profile:', profileError);
+      logger.error('delete-upload', 'Error updating user profile', profileError);
       // Continue even if profile update fails
     }
     
     res.status(200).json({ success: true, message: 'File deleted successfully' });
     
   } catch (error) {
-    console.error('Delete error details:', {
-      message: error.message,
-      stack: error.stack,
-      code: error.code
-    });
+    logger.error('delete-upload', 'Delete error details', error);
     res.status(500).json({ error: error.message });
   }
 });
