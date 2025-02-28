@@ -26,30 +26,84 @@ const upload = multer({
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
-  let serviceAccount;
   try {
-    if (process.env.NODE_ENV === 'production') {
-      // In production, use environment variable
-      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
-    } else {
-      // In development, use local file
-      serviceAccount = require('./serviceAccountKey.json');
+    // Try to use the service account from environment variable first
+    let serviceAccount;
+    let storageBucket = process.env.FIREBASE_STORAGE_BUCKET || 'vladahealth-b2a00.firebasestorage.app';
+    
+    console.log('Using storage bucket in server.js:', storageBucket);
+    
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        console.log('Using Firebase service account from environment variable in server.js');
+      } catch (e) {
+        console.error('Error parsing FIREBASE_SERVICE_ACCOUNT in server.js:', e);
+      }
     }
     
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      storageBucket: 'vladahealth-b2a00.appspot.com'
-    });
+    // If not available or invalid, try to use the local file
+    if (!serviceAccount) {
+      try {
+        // Use a direct require instead of dynamic require
+        if (fs.existsSync(path.join(process.cwd(), 'serviceAccountKey.json'))) {
+          serviceAccount = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'serviceAccountKey.json'), 'utf8'));
+          console.log('Using Firebase service account from local file in server.js');
+        }
+      } catch (e) {
+        console.error('Error loading local service account file in server.js:', e);
+      }
+    }
+    
+    // If still not available, use a direct configuration
+    if (!serviceAccount) {
+      console.log('Using direct Firebase configuration from environment variables in server.js');
+      
+      // Make sure we have the required environment variables
+      if (!process.env.FIREBASE_PROJECT_ID) {
+        console.error('Missing FIREBASE_PROJECT_ID environment variable');
+      }
+      
+      if (!process.env.FIREBASE_CLIENT_EMAIL) {
+        console.error('Missing FIREBASE_CLIENT_EMAIL environment variable');
+      }
+      
+      if (!process.env.FIREBASE_PRIVATE_KEY) {
+        console.error('Missing FIREBASE_PRIVATE_KEY environment variable');
+      }
+      
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
+        }),
+        storageBucket: storageBucket
+      });
+    } else {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        storageBucket: storageBucket
+      });
+    }
+    
     console.log('Firebase Admin initialized in server.js');
   } catch (error) {
-    console.error('Firebase Admin initialization error:', error);
-    throw error;
+    console.error('Firebase Admin initialization error in server.js:', error);
+    // Don't throw the error, just log it
   }
 } else {
   console.log('Using existing Firebase Admin app in server.js');
 }
 
-const bucket = admin.storage().bucket();
+// Get storage bucket
+let bucket;
+try {
+  bucket = admin.storage().bucket();
+  console.log('Storage bucket initialized in server.js:', bucket.name);
+} catch (error) {
+  console.error('Error getting storage bucket in server.js:', error);
+}
 
 // Add this before the deleteExpiredFiles function
 const auditLog = async (req, action, userId, resourceId, status, details) => {
@@ -101,6 +155,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    if (!bucket) {
+      return res.status(500).json({ error: 'Storage bucket not initialized' });
+    }
+
     const userId = req.body.userId;
     const fileName = req.body.fileName;
     const timestamp = Date.now();
@@ -108,32 +166,47 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     console.log(`Uploading file to ${destination}`);
     
-    // Upload file to Firebase Storage using buffer
-    await bucket.file(destination).save(req.file.buffer, {
-      metadata: {
-        contentType: req.file.mimetype,
+    try {
+      // Upload file to Firebase Storage using buffer
+      await bucket.file(destination).save(req.file.buffer, {
         metadata: {
-          userId,
-          fileName,
-          timestamp: timestamp.toString()
+          contentType: req.file.mimetype,
+          metadata: {
+            userId,
+            fileName,
+            timestamp: timestamp.toString()
+          }
         }
+      });
+      
+      // Get download URL
+      const [url] = await bucket.file(destination).getSignedUrl({
+        action: 'read',
+        expires: '03-01-2500' // Far future expiration
+      });
+      
+      res.json({ 
+        success: true, 
+        downloadURL: url,
+        fileName,
+        fileType: req.file.mimetype,
+        fileSize: req.file.size,
+        timestamp
+      });
+    } catch (uploadError) {
+      console.error('Firebase Storage upload error:', uploadError);
+      
+      // Check if it's a bucket not found error
+      if (uploadError.message && uploadError.message.includes('specified bucket does not exist')) {
+        console.error('Bucket does not exist. Please check your Firebase Storage configuration.');
+        return res.status(500).json({ 
+          error: 'Storage bucket not found. Please check your Firebase configuration.',
+          details: 'The specified storage bucket does not exist or the service account does not have access to it.'
+        });
       }
-    });
-    
-    // Get download URL
-    const [url] = await bucket.file(destination).getSignedUrl({
-      action: 'read',
-      expires: '03-01-2500' // Far future expiration
-    });
-    
-    res.json({ 
-      success: true, 
-      downloadURL: url,
-      fileName,
-      fileType: req.file.mimetype,
-      fileSize: req.file.size,
-      timestamp
-    });
+      
+      throw uploadError;
+    }
     
   } catch (error) {
     console.error('Upload error details:', {
@@ -158,6 +231,10 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    if (!bucket) {
+      return res.status(500).json({ error: 'Storage bucket not initialized' });
+    }
+
     const userId = req.body.userId;
     const fileName = req.body.fileName;
     const timestamp = Date.now();
@@ -165,32 +242,47 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     
     console.log(`Uploading file to ${destination}`);
     
-    // Upload file to Firebase Storage using buffer
-    await bucket.file(destination).save(req.file.buffer, {
-      metadata: {
-        contentType: req.file.mimetype,
+    try {
+      // Upload file to Firebase Storage using buffer
+      await bucket.file(destination).save(req.file.buffer, {
         metadata: {
-          userId,
-          fileName,
-          timestamp: timestamp.toString()
+          contentType: req.file.mimetype,
+          metadata: {
+            userId,
+            fileName,
+            timestamp: timestamp.toString()
+          }
         }
+      });
+      
+      // Get download URL
+      const [url] = await bucket.file(destination).getSignedUrl({
+        action: 'read',
+        expires: '03-01-2500' // Far future expiration
+      });
+      
+      res.json({ 
+        success: true, 
+        downloadURL: url,
+        fileName,
+        fileType: req.file.mimetype,
+        fileSize: req.file.size,
+        timestamp
+      });
+    } catch (uploadError) {
+      console.error('Firebase Storage upload error:', uploadError);
+      
+      // Check if it's a bucket not found error
+      if (uploadError.message && uploadError.message.includes('specified bucket does not exist')) {
+        console.error('Bucket does not exist. Please check your Firebase Storage configuration.');
+        return res.status(500).json({ 
+          error: 'Storage bucket not found. Please check your Firebase configuration.',
+          details: 'The specified storage bucket does not exist or the service account does not have access to it.'
+        });
       }
-    });
-    
-    // Get download URL
-    const [url] = await bucket.file(destination).getSignedUrl({
-      action: 'read',
-      expires: '03-01-2500' // Far future expiration
-    });
-    
-    res.json({ 
-      success: true, 
-      downloadURL: url,
-      fileName,
-      fileType: req.file.mimetype,
-      fileSize: req.file.size,
-      timestamp
-    });
+      
+      throw uploadError;
+    }
     
   } catch (error) {
     console.error('API Upload error details:', {

@@ -25,6 +25,9 @@ export default function Dashboard() {
   const [recentAnalyses, setRecentAnalyses] = useState([]);
   const [recentDisputes, setRecentDisputes] = useState([]);
   const [consentGiven, setConsentGiven] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState('');
+  const [deletingFileId, setDeletingFileId] = useState('');
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -198,10 +201,13 @@ export default function Dashboard() {
   const handleUpload = async () => {
     if (!selectedFile || !fileName) {
       console.error('No file or filename provided');
+      setUploadError('Please select a file and provide a name');
       return;
     }
     
     setUploadingFile(true);
+    setUploadProgress(10);
+    setUploadError('');
     console.log('Starting upload process:', {
       fileName,
       fileSize: selectedFile.size,
@@ -217,6 +223,7 @@ export default function Dashboard() {
       formData.append('fileName', fileName);
       
       console.log('Uploading file via proxy server...');
+      setUploadProgress(30);
       
       // Update the fetch URL based on the environment
       const uploadUrl = '/api/upload';
@@ -230,12 +237,16 @@ export default function Dashboard() {
         body: formData
       });
       
+      setUploadProgress(70);
+      
       if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(`Server responded with ${response.status}: ${errorData.error || response.statusText}`);
       }
       
       const data = await response.json();
       console.log('File uploaded successfully:', data);
+      setUploadProgress(90);
       
       // Continue with Firestore updates
       const billDocRef = await addDoc(collection(db, 'bills'), {
@@ -250,6 +261,7 @@ export default function Dashboard() {
         fileSize: data.fileSize
       });
       console.log('Saved to Firestore with ID:', billDocRef.id);
+      setUploadProgress(100);
 
       // Update user profile
       const userProfileRef = doc(db, 'userProfiles', user.uid);
@@ -263,11 +275,15 @@ export default function Dashboard() {
       });
       console.log('Updated user profile');
 
+      // Format the date nicely
+      const now = new Date();
+      const formattedDate = `${now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+
       // Update UI
       const newUpload = {
         id: billDocRef.id,
         fileName,
-        uploadedAt: new Date().toLocaleString(),
+        uploadedAt: formattedDate,
         status: 'pending_analysis',
         fileUrl: data.downloadURL
       };
@@ -279,11 +295,11 @@ export default function Dashboard() {
       setSelectedFile(null);
       setFileName('');
       setShowNameDialog(false);
-      alert('File uploaded successfully!');
 
     } catch (error) {
       console.error('Upload error:', error);
-      alert('Error uploading file: ' + error.message);
+      setUploadError(error.message || 'Error uploading file. Please try again.');
+      setUploadProgress(0);
     } finally {
       setUploadingFile(false);
     }
@@ -338,11 +354,37 @@ export default function Dashboard() {
         );
 
         const querySnapshot = await getDocs(q);
-        const uploads = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          uploadedAt: doc.data().uploadedAt?.toDate().toLocaleString() || new Date().toLocaleString()
-        }));
+        const uploads = querySnapshot.docs.map(doc => {
+          // Format the date consistently
+          let date;
+          if (doc.data().uploadedAt) {
+            date = doc.data().uploadedAt.toDate();
+          } else if (doc.data().timestamp) {
+            date = new Date(doc.data().timestamp);
+          } else {
+            date = new Date();
+          }
+          
+          const formattedDate = `${date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}, ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+          
+          // Extract the file path from the storage URL if available
+          let filePath = '';
+          if (doc.data().fileUrl) {
+            // Try to extract the path from the URL
+            const urlParts = doc.data().fileUrl.split('/o/');
+            if (urlParts.length > 1) {
+              filePath = decodeURIComponent(urlParts[1].split('?')[0]);
+            }
+          }
+          
+          return {
+            id: doc.id,
+            ...doc.data(),
+            uploadedAt: formattedDate,
+            fileUrl: doc.data().fileUrl || '',
+            filePath: filePath
+          };
+        });
 
         setRecentUploads(uploads);
       } catch (error) {
@@ -360,6 +402,38 @@ export default function Dashboard() {
       console.log('Firestore connection successful');
     } catch (error) {
       console.error('Firestore connection failed:', error);
+    }
+  };
+
+  const handleDelete = async (fileId, filePath) => {
+    if (!confirm('Are you sure you want to delete this file? This action cannot be undone.')) {
+      return;
+    }
+    
+    setDeletingFileId(fileId);
+    
+    try {
+      const response = await fetch(`/api/delete-upload?userId=${user.uid}&fileId=${fileId}${filePath ? `&filePath=${encodeURIComponent(filePath)}` : ''}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete file');
+      }
+      
+      // Update the UI by removing the deleted file
+      setRecentUploads(prev => prev.filter(upload => upload.id !== fileId));
+      
+      console.log('File deleted successfully');
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      alert('Error deleting file: ' + error.message);
+    } finally {
+      setDeletingFileId('');
     }
   };
 
@@ -543,15 +617,30 @@ export default function Dashboard() {
               <div style={{
                 marginTop: "-1rem",
                 marginBottom: "2rem",
-                padding: "1rem",
+                padding: "1.5rem",
                 background: "rgba(255, 255, 255, 0.05)",
                 borderRadius: theme.borderRadius.md
               }}>
+                <h3 style={{
+                  fontSize: "1rem",
+                  fontWeight: "600",
+                  marginBottom: "1rem",
+                  color: theme.colors.textPrimary
+                }}>Customize Bill Title</h3>
+                
+                <p style={{
+                  fontSize: "0.9rem",
+                  color: theme.colors.textSecondary,
+                  marginBottom: "1rem"
+                }}>
+                  Enter a descriptive name for this bill to help you identify it later
+                </p>
+                
                 <input
                   type="text"
                   value={fileName}
                   onChange={(e) => setFileName(e.target.value)}
-                  placeholder="Enter bill name"
+                  placeholder="Enter bill title"
                   style={{
                     width: "100%",
                     padding: "1rem",
@@ -638,7 +727,11 @@ export default function Dashboard() {
                       padding: "1rem",
                       background: "rgba(255, 255, 255, 0.03)",
                       borderRadius: theme.borderRadius.sm,
-                      border: "1px solid rgba(255, 255, 255, 0.05)"
+                      border: "1px solid rgba(255, 255, 255, 0.05)",
+                      transition: "all 0.2s ease",
+                      ":hover": {
+                        background: "rgba(255, 255, 255, 0.05)",
+                      }
                     }}>
                       <div style={{
                         display: "flex",
@@ -646,26 +739,97 @@ export default function Dashboard() {
                         marginBottom: "0.5rem",
                         alignItems: "center"
                       }}>
-                        <span style={{ fontWeight: "500" }}>{upload.fileName}</span>
+                        <span style={{ 
+                          fontWeight: "500",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem"
+                        }}>
+                          <span style={{ fontSize: "1.2rem" }}>📄</span>
+                          {upload.fileName}
+                        </span>
                         <span style={{
                           fontSize: "0.8rem",
                           color: theme.colors.textSecondary
                         }}>{upload.uploadedAt}</span>
                       </div>
                       <div style={{
-                        fontSize: "0.9rem",
-                        color: theme.colors.textSecondary,
                         display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem"
+                        justifyContent: "space-between",
+                        alignItems: "center"
                       }}>
-                        <span>Status:</span>
-                        <span style={{
-                          color: upload.status === 'pending_analysis' ? '#FCD34D' : '#34D399',
-                          fontSize: "0.8rem"
+                        <div style={{
+                          fontSize: "0.9rem",
+                          color: theme.colors.textSecondary,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem"
                         }}>
-                          {upload.status === 'pending_analysis' ? '⏳ Pending Analysis' : '✓ Analyzed'}
-                        </span>
+                          <span>Status:</span>
+                          <span style={{
+                            color: upload.status === 'pending_analysis' ? '#FCD34D' : '#34D399',
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.25rem"
+                          }}>
+                            {upload.status === 'pending_analysis' ? (
+                              <>
+                                <span style={{ fontSize: "1rem" }}>⏳</span> 
+                                <span>Pending Analysis</span>
+                              </>
+                            ) : (
+                              <>
+                                <span style={{ fontSize: "1rem" }}>✓</span> 
+                                <span>Analyzed</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <div style={{
+                          display: "flex",
+                          gap: "1rem",
+                          alignItems: "center"
+                        }}>
+                          <span 
+                            onClick={() => window.open(upload.fileUrl, '_blank')}
+                            style={{
+                              fontSize: "0.8rem",
+                              color: theme.colors.primary,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.25rem",
+                              cursor: "pointer"
+                            }}
+                          >
+                            View <span style={{ fontSize: "1rem" }}>👁️</span>
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent opening the file
+                              handleDelete(upload.id, upload.filePath);
+                            }}
+                            disabled={deletingFileId === upload.id}
+                            style={{
+                              background: "rgba(220, 38, 38, 0.1)",
+                              border: "1px solid rgba(220, 38, 38, 0.3)",
+                              color: "#ef4444",
+                              borderRadius: theme.borderRadius.sm,
+                              padding: "0.25rem 0.5rem",
+                              fontSize: "0.8rem",
+                              cursor: deletingFileId === upload.id ? "not-allowed" : "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.25rem",
+                              opacity: deletingFileId === upload.id ? 0.7 : 1
+                            }}
+                          >
+                            {deletingFileId === upload.id ? (
+                              <>Deleting...</>
+                            ) : (
+                              <>Delete <span style={{ fontSize: "0.9rem" }}>🗑️</span></>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
