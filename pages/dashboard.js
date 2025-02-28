@@ -224,6 +224,9 @@ export default function Dashboard() {
       // Upload to our proxy server
       const response = await fetch(uploadUrl, {
         method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
         body: formData
       });
       
