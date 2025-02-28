@@ -3,7 +3,45 @@
  * This helps with debugging Firebase and other issues
  */
 
+// Array to store listeners
+const listeners = [];
+
 const logger = {
+  /**
+   * Add a listener function to receive log entries
+   * @param {Function} listener - Function that will be called with each log entry
+   */
+  addListener: (listener) => {
+    if (typeof listener === 'function') {
+      listeners.push(listener);
+    }
+  },
+  
+  /**
+   * Remove a listener function
+   * @param {Function} listener - Function to remove
+   */
+  removeListener: (listener) => {
+    const index = listeners.indexOf(listener);
+    if (index !== -1) {
+      listeners.splice(index, 1);
+    }
+  },
+  
+  /**
+   * Notify all listeners with a log entry
+   * @param {Object} logObj - The log object to send to listeners
+   */
+  _notifyListeners: (logObj) => {
+    listeners.forEach(listener => {
+      try {
+        listener(logObj);
+      } catch (error) {
+        console.error('Error in log listener:', error);
+      }
+    });
+  },
+
   /**
    * Log information messages
    * @param {string} source - The source of the log (e.g., 'upload.js', 'firebase-init')
@@ -31,6 +69,7 @@ const logger = {
     }
     
     console.log(JSON.stringify(logObj));
+    logger._notifyListeners(logObj);
   },
   
   /**
@@ -60,6 +99,7 @@ const logger = {
     }
     
     console.warn(JSON.stringify(logObj));
+    logger._notifyListeners(logObj);
   },
   
   /**
@@ -106,6 +146,7 @@ const logger = {
     }
     
     console.error(JSON.stringify(logObj));
+    logger._notifyListeners(logObj);
   },
   
   /**
@@ -135,6 +176,7 @@ const logger = {
     };
     
     console.log(JSON.stringify(logObj));
+    logger._notifyListeners(logObj);
   }
 };
 
