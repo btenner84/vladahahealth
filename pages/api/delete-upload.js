@@ -1,17 +1,33 @@
 import admin from 'firebase-admin';
-import { createRouter } from 'next-connect';
+import nextConnect from 'next-connect';
 import logger from '../../utils/logger';
 
-// Initialize Firebase Admin if not already initialized
+// Check if Firebase is already initialized
 if (!admin.apps.length) {
+  logger.info('delete-upload', 'Initializing Firebase Admin in delete-upload API');
+  
   try {
-    logger.info('delete-upload', 'Initializing Firebase Admin in delete API');
+    // Get private key - try base64 first, then fall back to regular env var
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
     
-    // Initialize Firebase with environment variables only
+    // Check if we have a base64 encoded key
+    if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
+      try {
+        // Decode the base64 string
+        const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
+        privateKey = buffer.toString('utf8');
+        logger.info('delete-upload', 'Using base64 decoded private key');
+      } catch (decodeError) {
+        logger.error('delete-upload', 'Error decoding base64 private key', decodeError);
+        // Continue with regular private key
+      }
+    }
+    
+    // Initialize Firebase with environment variables
     const config = {
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY,
+      privateKey: privateKey,
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET
     };
     
@@ -24,36 +40,34 @@ if (!admin.apps.length) {
       storageBucket: config.storageBucket
     });
     
-    logger.firebaseInit('delete-upload', 'Firebase Admin initialized successfully in delete API', config);
+    logger.firebaseInit('delete-upload', 'Firebase Admin initialized successfully in delete-upload API', config);
   } catch (error) {
-    logger.error('delete-upload', 'Firebase Admin initialization error in delete API', error);
+    logger.error('delete-upload', 'Firebase initialization error in delete-upload API', error);
   }
-} else {
-  logger.info('delete-upload', 'Using existing Firebase Admin app in delete API');
 }
 
-// Get storage bucket
+// Get the storage bucket
 let bucket;
 try {
   bucket = admin.storage().bucket();
-  logger.info('delete-upload', 'Storage bucket initialized in delete API', { bucketName: bucket.name });
+  logger.info('delete-upload', 'Storage bucket initialized in delete-upload API', { bucketName: bucket.name });
 } catch (error) {
-  logger.error('delete-upload', 'Error getting storage bucket in delete API', error);
+  logger.error('delete-upload', 'Error initializing storage bucket in delete-upload API', error);
 }
 
 // Create API route handler
-const apiRoute = createRouter({
+const apiRoute = nextConnect({
   onError(error, req, res) {
-    logger.error('delete-upload', 'Delete API route error', error);
-    res.status(501).json({ error: `Sorry something went wrong! ${error.message}` });
+    logger.error('delete-upload', 'API route error', error);
+    res.status(500).json({ error: `Server error: ${error.message}` });
   },
   onNoMatch(req, res) {
-    logger.warn('delete-upload', `Method '${req.method}' Not Allowed`);
-    res.status(405).json({ error: `Method '${req.method}' Not Allowed` });
+    logger.warn('delete-upload', 'Method not allowed', { method: req.method });
+    res.status(405).json({ error: `Method '${req.method}' not allowed` });
   },
 });
 
-// Handle DELETE requests
+// Handle DELETE request
 apiRoute.delete(async (req, res) => {
   try {
     const { fileUrl, userId } = req.query;
@@ -215,4 +229,4 @@ apiRoute.post(async (req, res) => {
   }
 });
 
-export default apiRoute.handler(); 
+export default apiRoute; 

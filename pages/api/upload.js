@@ -1,19 +1,34 @@
 import multer from 'multer';
-import { createRouter } from 'next-connect';
+import nextConnect from 'next-connect';
 import admin from 'firebase-admin';
 import logger from '../../utils/logger';
 
-// Initialize Firebase Admin if not already initialized
-let bucket = null;
+// Check if Firebase is already initialized
 if (!admin.apps.length) {
+  logger.info('upload', 'Initializing Firebase Admin in upload API');
+  
   try {
-    logger.info('upload', 'Initializing Firebase Admin in upload API');
+    // Get private key - try base64 first, then fall back to regular env var
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
     
-    // Initialize Firebase with environment variables only
+    // Check if we have a base64 encoded key
+    if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
+      try {
+        // Decode the base64 string
+        const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
+        privateKey = buffer.toString('utf8');
+        logger.info('upload', 'Using base64 decoded private key');
+      } catch (decodeError) {
+        logger.error('upload', 'Error decoding base64 private key', decodeError);
+        // Continue with regular private key
+      }
+    }
+    
+    // Initialize Firebase with environment variables
     const config = {
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY,
+      privateKey: privateKey,
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET
     };
     
@@ -28,58 +43,66 @@ if (!admin.apps.length) {
     
     logger.firebaseInit('upload', 'Firebase Admin initialized successfully in upload API', config);
   } catch (error) {
-    logger.error('upload', 'Firebase Admin initialization error in upload API', error);
-    // Don't throw the error, just log it
+    logger.error('upload', 'Firebase initialization error in upload API', error);
   }
-} else {
-  logger.info('upload', 'Using existing Firebase Admin app in upload API');
 }
 
-// Get storage bucket
+// Get the storage bucket
+let bucket;
 try {
   bucket = admin.storage().bucket();
   logger.info('upload', 'Storage bucket initialized in upload API', { bucketName: bucket.name });
 } catch (error) {
-  logger.error('upload', 'Error getting storage bucket in upload API', error);
+  logger.error('upload', 'Error initializing storage bucket in upload API', error);
 }
 
-// Helper function to ensure bucket is initialized
-const ensureBucket = async () => {
-  if (!bucket) {
-    try {
-      logger.info('upload', 'Attempting to reinitialize bucket in upload API');
+// Function to ensure bucket is initialized
+async function ensureBucket(req, res, next) {
+  try {
+    if (!bucket) {
+      logger.info('upload', 'Reinitializing storage bucket');
       bucket = admin.storage().bucket();
-      logger.info('upload', 'Bucket reinitialized in upload API', { bucketName: bucket.name });
-      return true;
-    } catch (error) {
-      logger.error('upload', 'Failed to reinitialize bucket in upload API', error);
-      return false;
+      
+      if (!bucket) {
+        logger.error('upload', 'Failed to initialize storage bucket');
+        return res.status(500).json({ error: 'Failed to initialize storage bucket' });
+      }
+      
+      logger.info('upload', 'Storage bucket reinitialized', { bucketName: bucket.name });
     }
+    
+    next();
+  } catch (error) {
+    logger.error('upload', 'Error in ensureBucket middleware', error);
+    return res.status(500).json({ error: 'Storage bucket initialization failed', message: error.message });
   }
-  return true;
-};
+}
 
-// Configure multer
+// Configure multer for file uploads
 const upload = multer({
-  storage: multer.memoryStorage()
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
 });
 
 // Create API route handler
-const apiRoute = createRouter({
+const apiRoute = nextConnect({
   onError(error, req, res) {
     logger.error('upload', 'API route error', error);
-    res.status(501).json({ error: `Sorry something went wrong! ${error.message}` });
+    res.status(500).json({ error: `Server error: ${error.message}` });
   },
   onNoMatch(req, res) {
-    logger.warn('upload', `Method '${req.method}' Not Allowed`);
-    res.status(405).json({ error: `Method '${req.method}' Not Allowed` });
+    logger.warn('upload', 'Method not allowed', { method: req.method });
+    res.status(405).json({ error: `Method '${req.method}' not allowed` });
   },
 });
 
-// Use multer middleware
+// Add middleware
 apiRoute.use(upload.single('file'));
+apiRoute.use(ensureBucket);
 
-// Handle POST requests
+// Handle POST request
 apiRoute.post(async (req, res) => {
   try {
     logger.info('upload', 'Upload request received', {
@@ -91,27 +114,6 @@ apiRoute.post(async (req, res) => {
     if (!req.file) {
       logger.warn('upload', 'No file uploaded');
       return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    // Ensure bucket is initialized
-    if (!await ensureBucket()) {
-      logger.error('upload', 'Storage bucket not initialized', {
-        env: {
-          projectId: process.env.FIREBASE_PROJECT_ID ? 'Set' : 'Not set',
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL ? 'Set' : 'Not set',
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET ? 'Set' : 'Not set',
-          privateKey: process.env.FIREBASE_PRIVATE_KEY ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY.length + ')' : 'Not set'
-        }
-      });
-      return res.status(500).json({ 
-        error: 'Storage bucket not initialized',
-        env: {
-          projectId: process.env.FIREBASE_PROJECT_ID ? 'Set' : 'Not set',
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL ? 'Set' : 'Not set',
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET ? 'Set' : 'Not set',
-          privateKey: process.env.FIREBASE_PRIVATE_KEY ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY.length + ')' : 'Not set'
-        }
-      });
     }
 
     const userId = req.body.userId;
@@ -176,10 +178,10 @@ apiRoute.post(async (req, res) => {
   }
 });
 
-export default apiRoute.handler();
+export default apiRoute;
 
 export const config = {
   api: {
-    bodyParser: false, // Disallow body parsing, consume as stream
+    bodyParser: false,
   },
 }; 

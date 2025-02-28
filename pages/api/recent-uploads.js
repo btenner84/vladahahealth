@@ -5,14 +5,30 @@ export default async function handler(req, res) {
   try {
     // Check if Firebase is already initialized
     if (!admin.apps.length) {
-      logger.info('recent-uploads', 'Initializing Firebase Admin in recent-uploads API');
+      logger.info('recent-uploads', 'Initializing Firebase Admin');
       
       try {
-        // Initialize Firebase with environment variables only
+        // Get private key - try base64 first, then fall back to regular env var
+        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        
+        // Check if we have a base64 encoded key
+        if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
+          try {
+            // Decode the base64 string
+            const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
+            privateKey = buffer.toString('utf8');
+            logger.info('recent-uploads', 'Using base64 decoded private key');
+          } catch (decodeError) {
+            logger.error('recent-uploads', 'Error decoding base64 private key', decodeError);
+            // Continue with regular private key
+          }
+        }
+        
+        // Initialize Firebase with environment variables
         const config = {
           projectId: process.env.FIREBASE_PROJECT_ID,
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: process.env.FIREBASE_PRIVATE_KEY,
+          privateKey: privateKey,
           storageBucket: process.env.FIREBASE_STORAGE_BUCKET
         };
         
@@ -30,7 +46,7 @@ export default async function handler(req, res) {
         logger.error('recent-uploads', 'Firebase initialization error', error);
         return res.status(500).json({ 
           error: 'Firebase initialization failed', 
-          message: error.message
+          message: error.message 
         });
       }
     } else {
@@ -78,10 +94,7 @@ export default async function handler(req, res) {
       uploads: recentUploads
     });
   } catch (error) {
-    logger.error('recent-uploads', 'Error retrieving recent uploads', error);
-    return res.status(500).json({ 
-      error: 'Failed to retrieve recent uploads', 
-      message: error.message
-    });
+    logger.error('recent-uploads', 'Error in recent-uploads API', error);
+    return res.status(500).json({ error: 'Failed to retrieve recent uploads', message: error.message });
   }
 } 

@@ -8,11 +8,27 @@ export default async function handler(req, res) {
       logger.info('firebase-test', 'Initializing Firebase Admin in test endpoint');
       
       try {
-        // Initialize Firebase with environment variables only
+        // Get private key - try base64 first, then fall back to regular env var
+        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        
+        // Check if we have a base64 encoded key
+        if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
+          try {
+            // Decode the base64 string
+            const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
+            privateKey = buffer.toString('utf8');
+            logger.info('firebase-test', 'Using base64 decoded private key');
+          } catch (decodeError) {
+            logger.error('firebase-test', 'Error decoding base64 private key', decodeError);
+            // Continue with regular private key
+          }
+        }
+        
+        // Initialize Firebase with environment variables
         const config = {
           projectId: process.env.FIREBASE_PROJECT_ID,
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: process.env.FIREBASE_PRIVATE_KEY,
+          privateKey: privateKey,
           storageBucket: process.env.FIREBASE_STORAGE_BUCKET
         };
         
@@ -52,7 +68,8 @@ export default async function handler(req, res) {
           projectId: process.env.FIREBASE_PROJECT_ID ? 'Set' : 'Not set',
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL ? 'Set' : 'Not set',
           storageBucket: process.env.FIREBASE_STORAGE_BUCKET ? 'Set' : 'Not set',
-          privateKey: process.env.FIREBASE_PRIVATE_KEY ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY.length + ')' : 'Not set'
+          privateKey: process.env.FIREBASE_PRIVATE_KEY ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY.length + ')' : 'Not set',
+          privateKeyBase64: process.env.FIREBASE_PRIVATE_KEY_BASE64 ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY_BASE64.length + ')' : 'Not set'
         }
       });
     } catch (storageError) {
