@@ -219,9 +219,7 @@ export default function Dashboard() {
       console.log('Uploading file via proxy server...');
       
       // Update the fetch URL based on the environment
-      const uploadUrl = process.env.NODE_ENV === 'production' 
-        ? '/upload'  // This will be handled by Vercel routing
-        : 'http://localhost:3001/upload';
+      const uploadUrl = '/upload';  // Always use relative URL in production
       
       // Upload to our proxy server
       const response = await fetch(uploadUrl, {
