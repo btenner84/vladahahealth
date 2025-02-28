@@ -1,4 +1,3 @@
-import admin from 'firebase-admin';
 import logger from '../../utils/logger';
 
 // In-memory log store (this will be reset on server restart)
