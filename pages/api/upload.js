@@ -1,114 +1,58 @@
 import multer from 'multer';
 import { createRouter } from 'next-connect';
 import admin from 'firebase-admin';
-import path from 'path';
-import fs from 'fs';
+import logger from '../../utils/logger';
 
 // Initialize Firebase Admin if not already initialized
 let bucket = null;
 if (!admin.apps.length) {
   try {
-    // Try to use the service account from environment variable first
-    let serviceAccount;
-    let storageBucket = process.env.FIREBASE_STORAGE_BUCKET || 'vladahealth-b2a00.firebasestorage.app';
+    logger.info('upload', 'Initializing Firebase Admin in upload API');
     
-    console.log('Using storage bucket:', storageBucket);
+    // Initialize Firebase with environment variables only
+    const config = {
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY,
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+    };
     
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      try {
-        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        console.log('Using Firebase service account from environment variable');
-      } catch (e) {
-        console.error('Error parsing FIREBASE_SERVICE_ACCOUNT:', e);
-      }
-    }
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: config.projectId,
+        clientEmail: config.clientEmail,
+        privateKey: config.privateKey
+      }),
+      storageBucket: config.storageBucket
+    });
     
-    // If not available or invalid, try to use the local file
-    if (!serviceAccount) {
-      try {
-        const serviceAccountPath = path.join(process.cwd(), 'serviceAccountKey.json');
-        console.log('Looking for service account at:', serviceAccountPath);
-        
-        if (fs.existsSync(serviceAccountPath)) {
-          serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-          console.log('Using Firebase service account from local file');
-        } else {
-          console.log('Service account file not found at:', serviceAccountPath);
-        }
-      } catch (e) {
-        console.error('Error loading local service account file:', e);
-      }
-    }
-    
-    // If still not available, use a direct configuration
-    if (!serviceAccount) {
-      console.log('Using direct Firebase configuration from environment variables');
-      
-      // Make sure we have the required environment variables
-      if (!process.env.FIREBASE_PROJECT_ID) {
-        console.error('Missing FIREBASE_PROJECT_ID environment variable');
-      }
-      
-      if (!process.env.FIREBASE_CLIENT_EMAIL) {
-        console.error('Missing FIREBASE_CLIENT_EMAIL environment variable');
-      }
-      
-      if (!process.env.FIREBASE_PRIVATE_KEY) {
-        console.error('Missing FIREBASE_PRIVATE_KEY environment variable');
-      }
-      
-      try {
-        admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-          }),
-          storageBucket: storageBucket
-        });
-        console.log('Firebase Admin initialized with environment variables in API route');
-      } catch (error) {
-        console.error('Failed to initialize Firebase with environment variables in API route:', error);
-      }
-    } else {
-      try {
-        admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount),
-          storageBucket: storageBucket
-        });
-        console.log('Firebase Admin initialized with service account in API route');
-      } catch (error) {
-        console.error('Failed to initialize Firebase with service account in API route:', error);
-      }
-    }
-    
-    console.log('Firebase Admin initialized in API route');
+    logger.firebaseInit('upload', 'Firebase Admin initialized successfully in upload API', config);
   } catch (error) {
-    console.error('Firebase Admin initialization error:', error);
+    logger.error('upload', 'Firebase Admin initialization error in upload API', error);
     // Don't throw the error, just log it
   }
 } else {
-  console.log('Using existing Firebase Admin app');
+  logger.info('upload', 'Using existing Firebase Admin app in upload API');
 }
 
 // Get storage bucket
 try {
   bucket = admin.storage().bucket();
-  console.log('Storage bucket initialized:', bucket.name);
+  logger.info('upload', 'Storage bucket initialized in upload API', { bucketName: bucket.name });
 } catch (error) {
-  console.error('Error getting storage bucket:', error);
+  logger.error('upload', 'Error getting storage bucket in upload API', error);
 }
 
 // Helper function to ensure bucket is initialized
 const ensureBucket = async () => {
   if (!bucket) {
     try {
-      console.log('Attempting to reinitialize bucket in API route...');
+      logger.info('upload', 'Attempting to reinitialize bucket in upload API');
       bucket = admin.storage().bucket();
-      console.log('Bucket reinitialized in API route:', bucket.name);
+      logger.info('upload', 'Bucket reinitialized in upload API', { bucketName: bucket.name });
       return true;
     } catch (error) {
-      console.error('Failed to reinitialize bucket in API route:', error);
+      logger.error('upload', 'Failed to reinitialize bucket in upload API', error);
       return false;
     }
   }
@@ -123,10 +67,11 @@ const upload = multer({
 // Create API route handler
 const apiRoute = createRouter({
   onError(error, req, res) {
-    console.error('API route error:', error);
+    logger.error('upload', 'API route error', error);
     res.status(501).json({ error: `Sorry something went wrong! ${error.message}` });
   },
   onNoMatch(req, res) {
+    logger.warn('upload', `Method '${req.method}' Not Allowed`);
     res.status(405).json({ error: `Method '${req.method}' Not Allowed` });
   },
 });
@@ -137,19 +82,36 @@ apiRoute.use(upload.single('file'));
 // Handle POST requests
 apiRoute.post(async (req, res) => {
   try {
-    console.log('Upload request received:', {
+    logger.info('upload', 'Upload request received', {
       hasFile: !!req.file,
       userId: req.body.userId,
       fileName: req.body.fileName
     });
     
     if (!req.file) {
+      logger.warn('upload', 'No file uploaded');
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     // Ensure bucket is initialized
     if (!await ensureBucket()) {
-      return res.status(500).json({ error: 'Storage bucket not initialized' });
+      logger.error('upload', 'Storage bucket not initialized', {
+        env: {
+          projectId: process.env.FIREBASE_PROJECT_ID ? 'Set' : 'Not set',
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL ? 'Set' : 'Not set',
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET ? 'Set' : 'Not set',
+          privateKey: process.env.FIREBASE_PRIVATE_KEY ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY.length + ')' : 'Not set'
+        }
+      });
+      return res.status(500).json({ 
+        error: 'Storage bucket not initialized',
+        env: {
+          projectId: process.env.FIREBASE_PROJECT_ID ? 'Set' : 'Not set',
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL ? 'Set' : 'Not set',
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET ? 'Set' : 'Not set',
+          privateKey: process.env.FIREBASE_PRIVATE_KEY ? 'Set (length: ' + process.env.FIREBASE_PRIVATE_KEY.length + ')' : 'Not set'
+        }
+      });
     }
 
     const userId = req.body.userId;
@@ -157,7 +119,10 @@ apiRoute.post(async (req, res) => {
     const timestamp = Date.now();
     const destination = `bills/${userId}/${timestamp}_${fileName}`;
     
-    console.log(`Uploading file to ${destination}`);
+    logger.info('upload', `Uploading file to ${destination}`, {
+      fileSize: req.file.size,
+      fileType: req.file.mimetype
+    });
     
     try {
       // Upload file to Firebase Storage using buffer
@@ -172,11 +137,15 @@ apiRoute.post(async (req, res) => {
         }
       });
       
+      logger.info('upload', 'File uploaded successfully to Firebase Storage', { destination });
+      
       // Get download URL
       const [url] = await bucket.file(destination).getSignedUrl({
         action: 'read',
         expires: '03-01-2500' // Far future expiration
       });
+      
+      logger.info('upload', 'Generated signed URL for file', { fileName });
       
       res.status(200).json({ 
         success: true, 
@@ -187,11 +156,11 @@ apiRoute.post(async (req, res) => {
         timestamp
       });
     } catch (uploadError) {
-      console.error('Firebase Storage upload error:', uploadError);
+      logger.error('upload', 'Firebase Storage upload error', uploadError);
       
       // Check if it's a bucket not found error
       if (uploadError.message && uploadError.message.includes('specified bucket does not exist')) {
-        console.error('Bucket does not exist. Please check your Firebase Storage configuration.');
+        logger.error('upload', 'Bucket does not exist. Please check your Firebase Storage configuration.');
         return res.status(500).json({ 
           error: 'Storage bucket not found. Please check your Firebase configuration.',
           details: 'The specified storage bucket does not exist or the service account does not have access to it.'
@@ -202,11 +171,7 @@ apiRoute.post(async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Upload error details:', {
-      message: error.message,
-      stack: error.stack,
-      code: error.code
-    });
+    logger.error('upload', 'Upload error details', error);
     res.status(500).json({ error: error.message });
   }
 });
