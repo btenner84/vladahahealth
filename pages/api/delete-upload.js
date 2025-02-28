@@ -1,4 +1,4 @@
-import nextConnect from 'next-connect';
+import { createRouter } from 'next-connect';
 import logger from '../../utils/logger';
 import { getFirebaseAdmin, getStorage, getFirestore } from '../../utils/firebase-admin';
 
@@ -17,7 +17,7 @@ try {
 }
 
 // Create API route handler
-const apiRoute = nextConnect({
+const apiRoute = createRouter({
   onError(error, req, res) {
     logger.error('delete-upload', 'API route error', error);
     res.status(500).json({ error: `Server error: ${error.message}` });
@@ -214,4 +214,4 @@ apiRoute.post(async (req, res) => {
   }
 });
 
-export default apiRoute; 
+export default apiRoute.handler(); 
