@@ -2,26 +2,19 @@ import multer from 'multer';
 import nextConnect from 'next-connect';
 import admin from 'firebase-admin';
 import logger from '../../utils/logger';
+import { getBestAvailableKey } from '../../utils/firebase-key-helper';
 
 // Check if Firebase is already initialized
 if (!admin.apps.length) {
   logger.info('upload', 'Initializing Firebase Admin in upload API');
   
   try {
-    // Get private key - try base64 first, then fall back to regular env var
-    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+    // Get the best available private key using our helper
+    const privateKey = getBestAvailableKey();
     
-    // Check if we have a base64 encoded key
-    if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
-      try {
-        // Decode the base64 string
-        const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
-        privateKey = buffer.toString('utf8');
-        logger.info('upload', 'Using base64 decoded private key');
-      } catch (decodeError) {
-        logger.error('upload', 'Error decoding base64 private key', decodeError);
-        // Continue with regular private key
-      }
+    if (!privateKey) {
+      logger.error('upload', 'No valid private key found in environment variables');
+      throw new Error('No valid private key found in environment variables');
     }
     
     // Initialize Firebase with environment variables
@@ -41,7 +34,12 @@ if (!admin.apps.length) {
       storageBucket: config.storageBucket
     });
     
-    logger.firebaseInit('upload', 'Firebase Admin initialized successfully in upload API', config);
+    logger.firebaseInit('upload', 'Firebase Admin initialized successfully in upload API', {
+      projectId: config.projectId,
+      clientEmail: config.clientEmail,
+      privateKeyLength: config.privateKey ? config.privateKey.length : 0,
+      storageBucket: config.storageBucket
+    });
   } catch (error) {
     logger.error('upload', 'Firebase initialization error in upload API', error);
   }

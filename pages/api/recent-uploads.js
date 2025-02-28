@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import logger from '../../utils/logger';
+import { getBestAvailableKey } from '../../utils/firebase-key-helper';
 
 export default async function handler(req, res) {
   try {
@@ -8,20 +9,15 @@ export default async function handler(req, res) {
       logger.info('recent-uploads', 'Initializing Firebase Admin');
       
       try {
-        // Get private key - try base64 first, then fall back to regular env var
-        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        // Get the best available private key using our helper
+        const privateKey = getBestAvailableKey();
         
-        // Check if we have a base64 encoded key
-        if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
-          try {
-            // Decode the base64 string
-            const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
-            privateKey = buffer.toString('utf8');
-            logger.info('recent-uploads', 'Using base64 decoded private key');
-          } catch (decodeError) {
-            logger.error('recent-uploads', 'Error decoding base64 private key', decodeError);
-            // Continue with regular private key
-          }
+        if (!privateKey) {
+          logger.error('recent-uploads', 'No valid private key found in environment variables');
+          return res.status(500).json({ 
+            error: 'Firebase initialization failed', 
+            message: 'No valid private key found in environment variables'
+          });
         }
         
         // Initialize Firebase with environment variables
@@ -41,7 +37,12 @@ export default async function handler(req, res) {
           storageBucket: config.storageBucket
         });
         
-        logger.firebaseInit('recent-uploads', 'Firebase Admin initialized successfully', config);
+        logger.firebaseInit('recent-uploads', 'Firebase Admin initialized successfully', {
+          projectId: config.projectId,
+          clientEmail: config.clientEmail,
+          privateKeyLength: config.privateKey ? config.privateKey.length : 0,
+          storageBucket: config.storageBucket
+        });
       } catch (error) {
         logger.error('recent-uploads', 'Firebase initialization error', error);
         return res.status(500).json({ 

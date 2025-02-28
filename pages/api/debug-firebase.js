@@ -1,4 +1,5 @@
 import admin from 'firebase-admin';
+import { formatPrivateKey, decodeAndFormatBase64Key, getBestAvailableKey } from '../../utils/firebase-key-helper';
 
 export default async function handler(req, res) {
   try {
@@ -16,16 +17,15 @@ export default async function handler(req, res) {
     if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
       try {
         // Decode the base64 string
-        const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
-        const decodedKey = buffer.toString('utf8');
+        const decodedKey = decodeAndFormatBase64Key(process.env.FIREBASE_PRIVATE_KEY_BASE64);
         
         decodedKeyInfo = {
-          length: decodedKey.length,
-          startsWithCorrectHeader: decodedKey.startsWith('-----BEGIN PRIVATE KEY-----'),
-          endsWithCorrectFooter: decodedKey.endsWith('-----END PRIVATE KEY-----\n') || decodedKey.endsWith('-----END PRIVATE KEY-----'),
-          containsNewlines: decodedKey.includes('\n'),
-          firstFewChars: decodedKey.substring(0, 30) + '...',
-          lastFewChars: '...' + decodedKey.substring(decodedKey.length - 30)
+          length: decodedKey ? decodedKey.length : 0,
+          startsWithCorrectHeader: decodedKey ? decodedKey.startsWith('-----BEGIN PRIVATE KEY-----') : false,
+          endsWithCorrectFooter: decodedKey ? (decodedKey.endsWith('-----END PRIVATE KEY-----\n') || decodedKey.endsWith('-----END PRIVATE KEY-----')) : false,
+          containsNewlines: decodedKey ? decodedKey.includes('\n') : false,
+          firstFewChars: decodedKey ? decodedKey.substring(0, 30) + '...' : 'N/A',
+          lastFewChars: decodedKey ? '...' + decodedKey.substring(decodedKey.length - 30) : 'N/A'
         };
       } catch (decodeError) {
         decodedKeyInfo = {
@@ -34,6 +34,37 @@ export default async function handler(req, res) {
         };
       }
     }
+    
+    // Check regular private key format
+    let regularKeyInfo = null;
+    if (process.env.FIREBASE_PRIVATE_KEY) {
+      try {
+        const formattedKey = formatPrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+        
+        regularKeyInfo = {
+          length: formattedKey ? formattedKey.length : 0,
+          startsWithCorrectHeader: formattedKey ? formattedKey.startsWith('-----BEGIN PRIVATE KEY-----') : false,
+          endsWithCorrectFooter: formattedKey ? (formattedKey.endsWith('-----END PRIVATE KEY-----\n') || formattedKey.endsWith('-----END PRIVATE KEY-----')) : false,
+          containsNewlines: formattedKey ? formattedKey.includes('\n') : false,
+          containsLiteralNewlines: process.env.FIREBASE_PRIVATE_KEY.includes('\\n')
+        };
+      } catch (formatError) {
+        regularKeyInfo = {
+          error: 'Error formatting regular key',
+          message: formatError.message
+        };
+      }
+    }
+    
+    // Get best available key
+    const bestKey = getBestAvailableKey();
+    const bestKeyInfo = bestKey ? {
+      source: process.env.FIREBASE_PRIVATE_KEY_BASE64 ? 'base64' : 'regular',
+      length: bestKey.length,
+      isValid: bestKey.includes('-----BEGIN PRIVATE KEY-----') && bestKey.includes('-----END PRIVATE KEY-----') && bestKey.includes('\n')
+    } : {
+      error: 'No valid key available'
+    };
     
     // Check Firebase initialization status
     const firebaseStatus = {
@@ -45,26 +76,23 @@ export default async function handler(req, res) {
     let initResult = null;
     if (!admin.apps.length) {
       try {
-        // Get private key - try base64 first, then fall back to regular env var
-        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        // Get the best available private key
+        const privateKey = getBestAvailableKey();
         
-        if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
-          try {
-            const buffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
-            privateKey = buffer.toString('utf8');
-          } catch (decodeError) {
-            initResult = {
-              success: false,
-              stage: 'base64-decode',
-              error: decodeError.message
-            };
-            return res.status(200).json({
-              envCheck,
-              decodedKeyInfo,
-              firebaseStatus,
-              initResult
-            });
-          }
+        if (!privateKey) {
+          initResult = {
+            success: false,
+            stage: 'key-validation',
+            error: 'No valid private key found'
+          };
+          return res.status(200).json({
+            envCheck,
+            decodedKeyInfo,
+            regularKeyInfo,
+            bestKeyInfo,
+            firebaseStatus,
+            initResult
+          });
         }
         
         // Initialize Firebase with environment variables
@@ -122,6 +150,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       envCheck,
       decodedKeyInfo,
+      regularKeyInfo,
+      bestKeyInfo,
       firebaseStatus,
       initResult,
       bucketResult
