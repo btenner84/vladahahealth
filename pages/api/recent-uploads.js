@@ -1,61 +1,25 @@
-import admin from 'firebase-admin';
 import logger from '../../utils/logger';
-import { getBestAvailableKey } from '../../utils/firebase-key-helper';
+import { getFirebaseAdmin, getFirestore } from '../../utils/firebase-admin';
 
 export default async function handler(req, res) {
   try {
-    // Check if Firebase is already initialized
-    if (!admin.apps.length) {
-      logger.info('recent-uploads', 'Initializing Firebase Admin');
-      
-      try {
-        // Get the best available private key using our helper
-        const privateKey = getBestAvailableKey();
-        
-        if (!privateKey) {
-          logger.error('recent-uploads', 'No valid private key found in environment variables');
-          return res.status(500).json({ 
-            error: 'Firebase initialization failed', 
-            message: 'No valid private key found in environment variables'
-          });
-        }
-        
-        // Initialize Firebase with environment variables
-        const config = {
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: privateKey,
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        };
-        
-        admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId: config.projectId,
-            clientEmail: config.clientEmail,
-            privateKey: config.privateKey
-          }),
-          storageBucket: config.storageBucket
-        });
-        
-        logger.firebaseInit('recent-uploads', 'Firebase Admin initialized successfully', {
-          projectId: config.projectId,
-          clientEmail: config.clientEmail,
-          privateKeyLength: config.privateKey ? config.privateKey.length : 0,
-          storageBucket: config.storageBucket
-        });
-      } catch (error) {
-        logger.error('recent-uploads', 'Firebase initialization error', error);
-        return res.status(500).json({ 
-          error: 'Firebase initialization failed', 
-          message: error.message 
-        });
-      }
-    } else {
-      logger.info('recent-uploads', 'Firebase Admin already initialized');
-    }
+    logger.info('recent-uploads', 'Retrieving recent uploads');
     
-    // Get Firestore instance
-    const db = admin.firestore();
+    // Initialize Firebase and get Firestore
+    let admin;
+    let db;
+    
+    try {
+      admin = getFirebaseAdmin();
+      db = getFirestore();
+      logger.info('recent-uploads', 'Firebase and Firestore initialized successfully');
+    } catch (error) {
+      logger.error('recent-uploads', 'Error initializing Firebase components', error);
+      return res.status(500).json({ 
+        error: 'Firebase initialization failed', 
+        message: error.message 
+      });
+    }
     
     // Get recent uploads from users collection
     const uploads = [];
