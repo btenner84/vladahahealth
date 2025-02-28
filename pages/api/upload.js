@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 
 // Initialize Firebase Admin if not already initialized
+let bucket = null;
 if (!admin.apps.length) {
   try {
     // Try to use the service account from environment variable first
@@ -25,10 +26,14 @@ if (!admin.apps.length) {
     // If not available or invalid, try to use the local file
     if (!serviceAccount) {
       try {
-        // Use a direct require instead of dynamic require
-        if (fs.existsSync(path.join(process.cwd(), 'serviceAccountKey.json'))) {
-          serviceAccount = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'serviceAccountKey.json'), 'utf8'));
+        const serviceAccountPath = path.join(process.cwd(), 'serviceAccountKey.json');
+        console.log('Looking for service account at:', serviceAccountPath);
+        
+        if (fs.existsSync(serviceAccountPath)) {
+          serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
           console.log('Using Firebase service account from local file');
+        } else {
+          console.log('Service account file not found at:', serviceAccountPath);
         }
       } catch (e) {
         console.error('Error loading local service account file:', e);
@@ -52,19 +57,29 @@ if (!admin.apps.length) {
         console.error('Missing FIREBASE_PRIVATE_KEY environment variable');
       }
       
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-        }),
-        storageBucket: storageBucket
-      });
+      try {
+        admin.initializeApp({
+          credential: admin.credential.cert({
+            projectId: process.env.FIREBASE_PROJECT_ID,
+            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
+          }),
+          storageBucket: storageBucket
+        });
+        console.log('Firebase Admin initialized with environment variables in API route');
+      } catch (error) {
+        console.error('Failed to initialize Firebase with environment variables in API route:', error);
+      }
     } else {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        storageBucket: storageBucket
-      });
+      try {
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount),
+          storageBucket: storageBucket
+        });
+        console.log('Firebase Admin initialized with service account in API route');
+      } catch (error) {
+        console.error('Failed to initialize Firebase with service account in API route:', error);
+      }
     }
     
     console.log('Firebase Admin initialized in API route');
@@ -77,13 +92,28 @@ if (!admin.apps.length) {
 }
 
 // Get storage bucket
-let bucket;
 try {
   bucket = admin.storage().bucket();
   console.log('Storage bucket initialized:', bucket.name);
 } catch (error) {
   console.error('Error getting storage bucket:', error);
 }
+
+// Helper function to ensure bucket is initialized
+const ensureBucket = async () => {
+  if (!bucket) {
+    try {
+      console.log('Attempting to reinitialize bucket in API route...');
+      bucket = admin.storage().bucket();
+      console.log('Bucket reinitialized in API route:', bucket.name);
+      return true;
+    } catch (error) {
+      console.error('Failed to reinitialize bucket in API route:', error);
+      return false;
+    }
+  }
+  return true;
+};
 
 // Configure multer
 const upload = multer({
@@ -117,7 +147,8 @@ apiRoute.post(async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!bucket) {
+    // Ensure bucket is initialized
+    if (!await ensureBucket()) {
       return res.status(500).json({ error: 'Storage bucket not initialized' });
     }
 
