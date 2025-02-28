@@ -1,5 +1,9 @@
 const admin = require('firebase-admin');
 const logger = require('./logger');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 
 let firebaseAdmin = null;
 let firestoreDb = null;
@@ -19,182 +23,98 @@ function initializeFirebaseAdmin() {
 
     logger.info('firebase-admin', 'Initializing Firebase Admin');
 
-    // Try different initialization strategies
+    // Create a service account object from environment variables
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const storageBucketName = process.env.FIREBASE_STORAGE_BUCKET;
     
-    // Strategy 1: Use service account JSON if available
-    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    if (serviceAccountJson) {
-      try {
-        const serviceAccount = JSON.parse(serviceAccountJson);
-        logger.info('firebase-admin', 'Using service account JSON');
-        
-        firebaseAdmin = admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount),
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        
-        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with service account JSON', {
-          projectId: serviceAccount.project_id,
-          clientEmail: serviceAccount.client_email,
-          privateKeyLength: serviceAccount.private_key ? serviceAccount.private_key.length : 0,
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        
-        return firebaseAdmin;
-      } catch (error) {
-        logger.error('firebase-admin', 'Failed to initialize with service account JSON', error);
-        // Continue to next strategy
-      }
+    // Validate required config
+    if (!projectId || !clientEmail || !storageBucketName) {
+      throw new Error('Missing required Firebase configuration. Check environment variables.');
     }
     
-    // Strategy 2: Use base64 encoded key if available
+    // Get private key from environment variables
+    let privateKey = null;
+    
+    // Try to get private key from base64 encoded version first
     const base64Key = process.env.FIREBASE_PRIVATE_KEY_BASE64;
     if (base64Key) {
       try {
-        // Decode base64 key
-        let privateKey;
-        try {
-          privateKey = Buffer.from(base64Key, 'base64').toString('utf8');
-          logger.info('firebase-admin', 'Successfully decoded base64 private key');
-        } catch (error) {
-          logger.error('firebase-admin', 'Failed to decode base64 private key', error);
-          throw new Error('Invalid base64 private key');
-        }
-        
-        // Create a temporary file with the private key for Node.js versions that have OpenSSL issues
-        const fs = require('fs');
-        const os = require('os');
-        const path = require('path');
-        const crypto = require('crypto');
-        
-        const tempDir = os.tmpdir();
-        const keyFileName = `firebase-key-${crypto.randomBytes(8).toString('hex')}.pem`;
-        const keyFilePath = path.join(tempDir, keyFileName);
-        
-        // Write the key to a temporary file
-        fs.writeFileSync(keyFilePath, privateKey, { mode: 0o600 });
-        
-        logger.info('firebase-admin', 'Using temporary key file for authentication');
-        
-        // Initialize with the key file
-        firebaseAdmin = admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKeyPath: keyFilePath
-          }),
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        
-        // Clean up the temporary file after a delay
-        setTimeout(() => {
-          try {
-            fs.unlinkSync(keyFilePath);
-            logger.info('firebase-admin', 'Temporary key file removed');
-          } catch (error) {
-            logger.error('firebase-admin', 'Failed to remove temporary key file', error);
-          }
-        }, 5000);
-        
-        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with base64 key', {
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKeyLength: privateKey.length,
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        
-        return firebaseAdmin;
+        privateKey = Buffer.from(base64Key, 'base64').toString('utf8');
+        logger.info('firebase-admin', 'Using base64 decoded private key');
       } catch (error) {
-        logger.error('firebase-admin', 'Failed to initialize with base64 key', error);
-        // Continue to next strategy
+        logger.error('firebase-admin', 'Failed to decode base64 private key', error);
       }
     }
     
-    // Strategy 3: Use regular private key
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-    if (privateKey) {
-      try {
-        // Format the private key properly
-        let formattedKey = privateKey;
-        
+    // If base64 key failed, try regular private key
+    if (!privateKey) {
+      privateKey = process.env.FIREBASE_PRIVATE_KEY;
+      if (privateKey) {
         // Remove surrounding quotes if present
-        if (formattedKey.startsWith('"') && formattedKey.endsWith('"')) {
-          formattedKey = formattedKey.slice(1, -1);
+        if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+          privateKey = privateKey.slice(1, -1);
         }
         
         // Replace literal \n with actual newlines
-        formattedKey = formattedKey.replace(/\\n/g, '\n');
+        privateKey = privateKey.replace(/\\n/g, '\n');
         
         logger.info('firebase-admin', 'Using regular private key');
-        
-        // For Node.js 18+ and OpenSSL 3.0+, we need to use a different approach
-        // Create a temporary file with the private key
-        const fs = require('fs');
-        const os = require('os');
-        const path = require('path');
-        const crypto = require('crypto');
-        
-        const tempDir = os.tmpdir();
-        const keyFileName = `firebase-key-${crypto.randomBytes(8).toString('hex')}.pem`;
-        const keyFilePath = path.join(tempDir, keyFileName);
-        
-        // Write the key to a temporary file
-        fs.writeFileSync(keyFilePath, formattedKey, { mode: 0o600 });
-        
-        logger.info('firebase-admin', 'Using temporary key file for authentication');
-        
-        // Initialize with the key file path instead of the key content
-        firebaseAdmin = admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKeyPath: keyFilePath
-          }),
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        
-        // Clean up the temporary file after a delay
-        setTimeout(() => {
-          try {
-            fs.unlinkSync(keyFilePath);
-            logger.info('firebase-admin', 'Temporary key file removed');
-          } catch (error) {
-            logger.error('firebase-admin', 'Failed to remove temporary key file', error);
-          }
-        }, 5000);
-        
-        logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with regular key', {
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKeyLength: formattedKey.length,
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        
-        return firebaseAdmin;
-      } catch (error) {
-        logger.error('firebase-admin', 'Failed to initialize with regular private key', error);
-        // Continue to next strategy
       }
     }
     
-    // Strategy 4: Use application default credentials
-    try {
-      logger.info('firebase-admin', 'Attempting to use application default credentials');
-      
-      firebaseAdmin = admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-        storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-      });
-      
-      logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully with application default credentials', {
-        storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-      });
-      
-      return firebaseAdmin;
-    } catch (error) {
-      logger.error('firebase-admin', 'Failed to initialize with application default credentials', error);
-      throw new Error('All Firebase initialization strategies failed');
+    if (!privateKey) {
+      throw new Error('No private key available. Check environment variables.');
     }
+    
+    // Create a temporary file with the private key
+    const tempDir = os.tmpdir();
+    const keyFileName = `firebase-key-${crypto.randomBytes(8).toString('hex')}.json`;
+    const keyFilePath = path.join(tempDir, keyFileName);
+    
+    // Create a service account JSON file
+    const serviceAccount = {
+      type: 'service_account',
+      project_id: projectId,
+      private_key_id: crypto.randomBytes(16).toString('hex'),
+      private_key: privateKey,
+      client_email: clientEmail,
+      client_id: '',
+      auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+      token_uri: 'https://oauth2.googleapis.com/token',
+      auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+      client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${encodeURIComponent(clientEmail)}`
+    };
+    
+    // Write the service account to a temporary file
+    fs.writeFileSync(keyFilePath, JSON.stringify(serviceAccount, null, 2), { mode: 0o600 });
+    
+    logger.info('firebase-admin', 'Created temporary service account file');
+    
+    // Initialize with the service account file
+    firebaseAdmin = admin.initializeApp({
+      credential: admin.credential.cert(keyFilePath),
+      storageBucket: storageBucketName
+    });
+    
+    // Clean up the temporary file after a delay
+    setTimeout(() => {
+      try {
+        fs.unlinkSync(keyFilePath);
+        logger.info('firebase-admin', 'Temporary service account file removed');
+      } catch (error) {
+        logger.error('firebase-admin', 'Failed to remove temporary service account file', error);
+      }
+    }, 5000);
+    
+    logger.firebaseInit('firebase-admin', 'Firebase Admin initialized successfully', {
+      projectId,
+      clientEmail,
+      privateKeyLength: privateKey.length,
+      storageBucket: storageBucketName
+    });
+    
+    return firebaseAdmin;
   } catch (error) {
     logger.error('firebase-admin', 'Firebase Admin initialization failed', error);
     throw error;
