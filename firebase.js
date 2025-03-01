@@ -2,7 +2,6 @@ import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
-import { doc, setDoc } from "firebase/firestore";
 
 // Add this before initializing Firebase
 console.log('Firebase config check:', {
@@ -23,7 +22,8 @@ const firebaseConfig = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase only if it hasn't been initialized already
@@ -42,27 +42,11 @@ if (!getApps().length) {
 // Firebase services
 const auth = getAuth(app);
 const db = getFirestore(app);
-
-// Initialize storage with CORS settings
 const storage = getStorage(app);
 
+// Google Auth Provider
 const provider = new GoogleAuthProvider();
-
-// Add scopes for Google provider (optional)
 provider.addScope('https://www.googleapis.com/auth/userinfo.email');
 provider.addScope('https://www.googleapis.com/auth/userinfo.profile');
-
-// Test Firestore connection
-const testFirestore = async () => {
-  try {
-    const testDoc = doc(db, 'test', 'test');
-    await setDoc(testDoc, { test: true });
-    console.log('Firestore connection successful');
-  } catch (error) {
-    console.error('Firestore connection failed:', error);
-  }
-};
-
-testFirestore();
 
 export { auth, provider, db, storage };
