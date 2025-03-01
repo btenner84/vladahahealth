@@ -6,9 +6,19 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
     // Allow authenticated users to read and write their own data
-    match /users/{userId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    match /userProfiles/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Allow authenticated users to access their own bills
+    match /bills/{billId} {
+      allow read, write: if isAuthenticated() && 
+        (resource == null || resource.data.userId == request.auth.uid);
     }
 
     // Allow authenticated users to read and write to test collection (for testing only)

@@ -1,0 +1,212 @@
+import pdf from 'pdf-parse';
+import { createWorker } from 'tesseract.js';
+import OpenAI from 'openai';
+import fetch from 'node-fetch';
+import { storage } from '../firebase';
+import { getDownloadURL, ref } from 'firebase/storage';
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+export async function extractTextFromPDF(pdfBuffer) {
+  try {
+    const data = await pdf(pdfBuffer);
+    if (!data || !data.text) {
+      throw new Error('No text content found in PDF');
+    }
+    return data.text;
+  } catch (error) {
+    console.error('PDF parsing error:', error);
+    error.step = 'pdf_extraction';
+    error.details = { bufferSize: pdfBuffer.length };
+    throw error;
+  }
+}
+
+export async function extractTextFromImage(imageBuffer) {
+  let worker = null;
+  try {
+    worker = await createWorker();
+    await worker.loadLanguage('eng');
+    await worker.initialize('eng');
+    const { data: { text } } = await worker.recognize(imageBuffer);
+    
+    if (!text || text.trim().length === 0) {
+      throw new Error('No text content found in image');
+    }
+    
+    return text;
+  } catch (error) {
+    console.error('OCR error:', error);
+    error.step = 'ocr_extraction';
+    error.details = { bufferSize: imageBuffer.length };
+    throw error;
+  } finally {
+    if (worker) {
+      try {
+        await worker.terminate();
+      } catch (error) {
+        console.error('Error terminating Tesseract worker:', error);
+      }
+    }
+  }
+}
+
+export async function fetchFileBuffer(fileUrl) {
+  try {
+    // Handle Firebase Storage URLs
+    if (fileUrl.includes('firebasestorage.googleapis.com')) {
+      // The URL is already a direct download URL
+      const response = await fetch(fileUrl);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const buffer = await response.buffer();
+      return buffer;
+    } else {
+      throw new Error('Invalid file URL format');
+    }
+  } catch (error) {
+    console.error('File fetch error:', error);
+    error.step = 'file_fetch';
+    error.details = { url: fileUrl };
+    throw error;
+  }
+}
+
+export async function processWithLLM(text) {
+  try {
+    console.log('Starting LLM processing with text length:', text.length);
+    
+    const prompt = `
+      You are a medical bill analysis expert. Your task is to extract information from the following medical bill and return it ONLY as a valid JSON object.
+
+      REQUIRED JSON FORMAT:
+      {
+        "patientInfo": {
+          "fullName": "string",
+          "dateOfBirth": "string",
+          "accountNumber": "string",
+          "insuranceInfo": "string"
+        },
+        "billInfo": {
+          "totalAmount": "string",
+          "serviceDates": "string",
+          "dueDate": "string",
+          "facilityName": "string"
+        },
+        "services": [
+          {
+            "description": "string",
+            "code": "string",
+            "amount": "string",
+            "details": "string"
+          }
+        ],
+        "insuranceInfo": {
+          "amountCovered": "string",
+          "patientResponsibility": "string",
+          "adjustments": "string"
+        }
+      }
+
+      IMPORTANT RULES:
+      1. Return ONLY the JSON object, no additional text or explanations
+      2. Use "Not found" for any missing information
+      3. Ensure all values are strings
+      4. Always include at least one item in the services array
+      5. Maintain the exact structure shown above
+      6. Do not add any additional fields
+      7. Ensure the response is valid JSON that can be parsed
+
+      MEDICAL BILL TEXT TO ANALYZE:
+      ${text}
+    `;
+
+    console.log('Sending request to OpenAI...');
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: "You are a medical bill analysis expert. You must return ONLY valid JSON in the exact format specified. No other text or explanations."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.1, // Lower temperature for more consistent formatting
+      max_tokens: 2000
+    });
+
+    if (!completion.choices?.[0]?.message?.content) {
+      throw new Error('No content in OpenAI response');
+    }
+
+    const responseContent = completion.choices[0].message.content.trim();
+    console.log('Raw OpenAI response:', responseContent);
+
+    try {
+      // Try to parse the response as JSON
+      const parsedResponse = JSON.parse(responseContent);
+      
+      // Validate the required structure
+      const requiredKeys = ['patientInfo', 'billInfo', 'services', 'insuranceInfo'];
+      const missingKeys = requiredKeys.filter(key => !parsedResponse[key]);
+      
+      if (missingKeys.length > 0) {
+        throw new Error(`Missing required keys: ${missingKeys.join(', ')}`);
+      }
+
+      // Validate services array
+      if (!Array.isArray(parsedResponse.services) || parsedResponse.services.length === 0) {
+        throw new Error('Services must be a non-empty array');
+      }
+
+      return parsedResponse;
+    } catch (parseError) {
+      console.error('JSON parsing error:', parseError);
+      console.error('Response that failed to parse:', responseContent);
+      throw new Error(`Failed to parse LLM response as valid JSON: ${parseError.message}`);
+    }
+  } catch (error) {
+    console.error('LLM processing error:', error);
+    error.step = 'llm_processing';
+    error.details = error.message;
+    throw error;
+  }
+}
+
+export async function detectFileType(fileUrl) {
+  try {
+    if (!fileUrl) {
+      throw new Error('No file URL provided');
+    }
+
+    const response = await fetch(fileUrl, { method: 'HEAD' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch file headers: ${response.status}`);
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (!contentType) {
+      throw new Error('No content-type header found');
+    }
+
+    console.log('Content-Type:', contentType);
+    
+    if (contentType.includes('pdf')) {
+      return 'pdf';
+    } else if (contentType.includes('image')) {
+      return 'image';
+    } else {
+      throw new Error(`Unsupported content type: ${contentType}`);
+    }
+  } catch (error) {
+    console.error('File type detection error:', error);
+    error.step = 'file_type_detection';
+    error.details = { url: fileUrl };
+    throw error;
+  }
+} 

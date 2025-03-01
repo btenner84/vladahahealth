@@ -44,3 +44,9 @@ cors.json
 # IDE
 .idea/
 .vscode/
+
+
+.env
+.env.local
+.env.development
+.env.production

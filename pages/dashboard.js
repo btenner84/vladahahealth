@@ -3,9 +3,9 @@ import { useRouter } from 'next/router';
 import { auth } from '../firebase';
 import { theme } from '../styles/theme';
 import Link from 'next/link';
-import { doc, getDoc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, setDoc, deleteDoc } from 'firebase/firestore';
 import { db, storage } from '../firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { collection, addDoc, serverTimestamp, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 
 export default function Dashboard() {
@@ -19,12 +19,9 @@ export default function Dashboard() {
   const [showNameDialog, setShowNameDialog] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [recentUploads, setRecentUploads] = useState([]);
-  const [selectedBillForAnalysis, setSelectedBillForAnalysis] = useState('');
+  const [deletingFile, setDeletingFile] = useState(false);
+  const [selectedBill, setSelectedBill] = useState('');
   const [selectedBillForDispute, setSelectedBillForDispute] = useState('');
-  const [analyzedBills, setAnalyzedBills] = useState([]);
-  const [analyzingBill, setAnalyzingBill] = useState(false);
-  const [recentAnalyses, setRecentAnalyses] = useState([]);
-  const [recentDisputes, setRecentDisputes] = useState([]);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -213,7 +210,6 @@ export default function Dashboard() {
       const storageRef = ref(storage, `bills/${user.uid}/${timestamp}_${fileName}`);
       console.log('Created storage reference:', storageRef.fullPath);
       
-      // Add metadata
       const metadata = {
         contentType: selectedFile.type,
         customMetadata: {
@@ -227,12 +223,10 @@ export default function Dashboard() {
       const snapshot = await uploadBytes(storageRef, selectedFile, metadata);
       console.log('File uploaded to Storage:', snapshot.ref.fullPath);
       
-      // Get download URL
       console.log('Getting download URL...');
       const downloadURL = await getDownloadURL(snapshot.ref);
       console.log('Got download URL:', downloadURL);
       
-      // Save to Firestore
       console.log('Saving metadata to Firestore...');
       const billDocRef = await addDoc(collection(db, 'bills'), {
         userId: user.uid,
@@ -240,10 +234,10 @@ export default function Dashboard() {
         originalName: selectedFile.name,
         fileUrl: downloadURL,
         uploadedAt: serverTimestamp(),
-        status: 'pending_analysis',
         timestamp: timestamp,
         fileType: selectedFile.type,
-        fileSize: selectedFile.size
+        fileSize: selectedFile.size,
+        storagePath: storageRef.fullPath
       });
       console.log('Saved to Firestore with ID:', billDocRef.id);
 
@@ -254,8 +248,7 @@ export default function Dashboard() {
         bills: arrayUnion({
           billId: billDocRef.id,
           fileName: fileName,
-          uploadedAt: timestamp,
-          status: 'pending_analysis'
+          uploadedAt: timestamp
         })
       });
       console.log('Updated user profile');
@@ -265,8 +258,8 @@ export default function Dashboard() {
         id: billDocRef.id,
         fileName,
         uploadedAt: new Date().toLocaleString(),
-        status: 'pending_analysis',
-        fileUrl: downloadURL
+        fileUrl: downloadURL,
+        storagePath: storageRef.fullPath
       };
 
       setRecentUploads(prev => [newUpload, ...prev].slice(0, 5));
@@ -286,39 +279,75 @@ export default function Dashboard() {
     }
   };
 
-  const handleAnalysis = async () => {
-    if (!selectedBillForAnalysis) return;
+  const handleDelete = async (billId, storagePath) => {
+    if (!billId) {
+      console.error('No billId provided');
+      return;
+    }
+    if (!storagePath) {
+      console.error('No storagePath provided');
+      return;
+    }
+    if (deletingFile) {
+      console.log('Already deleting a file');
+      return;
+    }
     
-    setAnalyzingBill(true);
+    if (!confirm('Are you sure you want to delete this bill?')) return;
+    
+    setDeletingFile(true);
     try {
-      // Find the selected bill from recent uploads
-      const billToAnalyze = recentUploads.find(
-        upload => upload.fileName === selectedBillForAnalysis
-      );
-
-      // Simulate AI analysis (replace with actual API call)
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Add to analyzed bills
-      const analysisResult = {
-        fileName: billToAnalyze.fileName,
-        analyzedAt: new Date().toLocaleString(),
-        findings: {
-          potentialSavings: "$1,200",
-          errorCount: 3,
-          status: 'completed'
-        }
-      };
-
-      setAnalyzedBills(prev => [analysisResult, ...prev]);
-      setRecentAnalyses(prev => [analysisResult, ...prev]);
+      console.log('Starting deletion process for:', { billId, storagePath });
       
-      // Reset selection
-      setSelectedBillForAnalysis('');
+      // Get the bill data first
+      const billDoc = await getDoc(doc(db, 'bills', billId));
+      if (!billDoc.exists()) {
+        throw new Error('Bill not found in Firestore');
+      }
+      const billData = billDoc.data();
+      console.log('Found bill data:', billData);
+      
+      // Delete from Storage
+      const storageRef = ref(storage, storagePath);
+      await deleteObject(storageRef);
+      console.log('Successfully deleted from storage');
+      
+      // Delete from Firestore
+      await deleteDoc(doc(db, 'bills', billId));
+      console.log('Successfully deleted from Firestore');
+      
+      // Update UI
+      setRecentUploads(prev => prev.filter(upload => upload.id !== billId));
+      
+      // Update user profile
+      const userProfileRef = doc(db, 'userProfiles', user.uid);
+      const userProfileDoc = await getDoc(userProfileRef);
+      if (userProfileDoc.exists()) {
+        const bills = userProfileDoc.data().bills || [];
+        await updateDoc(userProfileRef, {
+          bills: bills.filter(bill => bill.billId !== billId)
+        });
+        console.log('Successfully updated user profile');
+      }
+      
+      alert('Bill deleted successfully!');
     } catch (error) {
-      console.error('Analysis error:', error);
+      console.error('Delete error:', error);
+      if (error.code === 'storage/object-not-found') {
+        // If storage object is not found, still try to clean up Firestore
+        try {
+          await deleteDoc(doc(db, 'bills', billId));
+          setRecentUploads(prev => prev.filter(upload => upload.id !== billId));
+          alert('Bill record deleted (file was already removed)');
+        } catch (cleanupError) {
+          console.error('Cleanup error:', cleanupError);
+          alert('Error cleaning up bill record: ' + cleanupError.message);
+        }
+      } else {
+        alert(`Error deleting bill: ${error.message}. Please try again.`);
+      }
     } finally {
-      setAnalyzingBill(false);
+      setDeletingFile(false);
     }
   };
 
@@ -335,12 +364,19 @@ export default function Dashboard() {
         );
 
         const querySnapshot = await getDocs(q);
-        const uploads = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          uploadedAt: doc.data().uploadedAt?.toDate().toLocaleString() || new Date().toLocaleString()
-        }));
+        const uploads = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          console.log('Raw bill data:', data); // Log raw data
+          return {
+            id: doc.id,
+            fileName: data.fileName,
+            uploadedAt: data.uploadedAt?.toDate().toLocaleString() || new Date().toLocaleString(),
+            fileUrl: data.fileUrl,
+            storagePath: data.storagePath || `bills/${user.uid}/${data.timestamp}_${data.fileName}` // Fallback if storagePath is missing
+          };
+        });
 
+        console.log('Processed uploads:', uploads); // Log processed data
         setRecentUploads(uploads);
       } catch (error) {
         console.error('Error fetching uploads:', error);
@@ -358,6 +394,25 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Firestore connection failed:', error);
     }
+  };
+
+  const handleAnalyze = async () => {
+    if (!selectedBill) {
+      alert('Please select a bill to analyze');
+      return;
+    }
+    
+    try {
+      // Navigate to the analysis page for the selected bill
+      router.push(`/analysis/${selectedBill}`);
+    } catch (error) {
+      console.error('Error starting analysis:', error);
+      alert('Error starting analysis. Please try again.');
+    }
+  };
+
+  const handleGenerateDispute = () => {
+    // Implementation of handleGenerateDispute function
   };
 
   return (
@@ -402,7 +457,18 @@ export default function Dashboard() {
             alignItems: "center",
             gap: "1.5rem"
           }}>
-            <UserAvatar email={user?.email} />
+            <Link href="/profile" style={{
+              padding: "0.75rem 1.5rem",
+              background: "transparent",
+              border: `1px solid ${theme.colors.primary}`,
+              borderRadius: theme.borderRadius.md,
+              color: theme.colors.primary,
+              textDecoration: "none",
+              fontSize: "0.9rem",
+              fontWeight: "600"
+            }}>
+              Profile
+            </Link>
             <button
               onClick={() => auth.signOut()}
               style={{
@@ -472,7 +538,7 @@ export default function Dashboard() {
         {/* Main Dashboard Grid */}
         <div style={{
           display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr",
+          gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
           gap: "2rem"
         }}>
           {/* Left Panel - Bill Upload */}
@@ -650,19 +716,46 @@ export default function Dashboard() {
                         }}>{upload.uploadedAt}</span>
                       </div>
                       <div style={{
-                        fontSize: "0.9rem",
-                        color: theme.colors.textSecondary,
                         display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem"
+                        justifyContent: "space-between",
+                        alignItems: "center"
                       }}>
-                        <span>Status:</span>
-                        <span style={{
-                          color: upload.status === 'pending_analysis' ? '#FCD34D' : '#34D399',
-                          fontSize: "0.8rem"
-                        }}>
-                          {upload.status === 'pending_analysis' ? '⏳ Pending Analysis' : '✓ Analyzed'}
-                        </span>
+                        <a
+                          href={upload.fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            color: theme.colors.primary,
+                            textDecoration: "none",
+                            fontSize: "0.9rem",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.25rem"
+                          }}
+                        >
+                          View Bill 👁️
+                        </a>
+                        <button
+                          onClick={() => {
+                            console.log('Delete clicked:', { id: upload.id, storagePath: upload.storagePath });
+                            handleDelete(upload.id, upload.storagePath);
+                          }}
+                          disabled={deletingFile}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#EF4444",
+                            cursor: deletingFile ? "not-allowed" : "pointer",
+                            opacity: deletingFile ? 0.5 : 1,
+                            padding: "0.5rem",
+                            fontSize: "0.9rem",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.25rem"
+                          }}
+                        >
+                          {deletingFile ? "Deleting..." : "Delete 🗑️"}
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -686,7 +779,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Right Panel - AI Analysis */}
+          {/* Middle Panel - AI Analysis */}
           <div style={{
             background: theme.colors.bgSecondary,
             borderRadius: theme.borderRadius.lg,
@@ -703,14 +796,14 @@ export default function Dashboard() {
               background: theme.colors.gradientSecondary,
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent"
-            }}>AI Analysis: Fight Back Now 🤖</h2>
+            }}>AI Analysis 🤖</h2>
 
             <div style={{
               marginBottom: "2rem"
             }}>
               <select
-                value={selectedBillForAnalysis}
-                onChange={(e) => setSelectedBillForAnalysis(e.target.value)}
+                value={selectedBill}
+                onChange={(e) => setSelectedBill(e.target.value)}
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -718,21 +811,20 @@ export default function Dashboard() {
                   border: "1px solid rgba(255, 255, 255, 0.1)",
                   borderRadius: theme.borderRadius.md,
                   color: theme.colors.textPrimary,
-                  cursor: "pointer",
                   marginBottom: "1rem"
                 }}
               >
                 <option value="">Select a bill to analyze</option>
                 {recentUploads.map((upload, index) => (
-                  <option key={index} value={upload.fileName}>
+                  <option key={index} value={upload.id}>
                     {upload.fileName}
                   </option>
                 ))}
               </select>
 
               <button
-                disabled={!selectedBillForAnalysis || analyzingBill}
-                onClick={handleAnalysis}
+                onClick={handleAnalyze}
+                disabled={!selectedBill}
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -742,90 +834,20 @@ export default function Dashboard() {
                   color: theme.colors.textPrimary,
                   fontSize: "1rem",
                   fontWeight: "600",
-                  cursor: (selectedBillForAnalysis && !analyzingBill) ? "pointer" : "not-allowed",
-                  opacity: (selectedBillForAnalysis && !analyzingBill) ? 1 : 0.7,
+                  cursor: selectedBill ? "pointer" : "not-allowed",
+                  opacity: selectedBill ? 1 : 0.7,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "0.5rem"
                 }}
               >
-                <span>
-                  {analyzingBill 
-                    ? "Analyzing..."
-                    : selectedBillForAnalysis 
-                      ? `Analyze "${selectedBillForAnalysis}"`
-                      : "Select a bill to analyze"}
-                </span>
-                <span style={{ fontSize: "1.2rem" }}>{analyzingBill ? "🔄" : "⚡"}</span>
+                Analyze Bill ⚡
               </button>
-            </div>
-
-            {/* Recent Analyses */}
-            <div style={{
-              marginTop: "2rem",
-              padding: "1.5rem",
-              background: "rgba(255, 255, 255, 0.05)",
-              borderRadius: theme.borderRadius.md
-            }}>
-              <h3 style={{
-                fontSize: "1rem",
-                fontWeight: "600",
-                marginBottom: "1rem"
-              }}>Recent Analyses</h3>
-              
-              {recentAnalyses.length > 0 ? (
-                <div style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.75rem"
-                }}>
-                  {recentAnalyses.map((analysis, index) => (
-                    <div key={index} style={{
-                      padding: "1rem",
-                      background: "rgba(255, 255, 255, 0.03)",
-                      borderRadius: theme.borderRadius.sm
-                    }}>
-                      <div style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginBottom: "0.5rem"
-                      }}>
-                        <span>{analysis.fileName}</span>
-                        <span style={{
-                          fontSize: "0.8rem",
-                          color: theme.colors.textSecondary
-                        }}>{analysis.analyzedAt}</span>
-                      </div>
-                      <div style={{
-                        fontSize: "0.9rem",
-                        color: theme.colors.textSecondary
-                      }}>
-                        <p>Potential Savings: {analysis.findings.potentialSavings}</p>
-                        <p>Errors Found: {analysis.findings.errorCount}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{
-                  color: theme.colors.textSecondary,
-                  fontSize: "0.9rem",
-                  textAlign: "center",
-                  padding: "1.5rem 0",
-                  borderRadius: theme.borderRadius.sm,
-                  background: "rgba(255, 255, 255, 0.03)"
-                }}>
-                  <p style={{ marginBottom: "0.5rem" }}>No analyses completed yet</p>
-                  <p style={{ fontSize: "0.8rem", opacity: 0.7 }}>
-                    Select a bill above to start your first analysis
-                  </p>
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Right Panel - Generate Dispute Letter */}
+          {/* Right Panel - Generate Dispute */}
           <div style={{
             background: theme.colors.bgSecondary,
             borderRadius: theme.borderRadius.lg,
@@ -842,7 +864,7 @@ export default function Dashboard() {
               background: theme.colors.gradientSecondary,
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent"
-            }}>Generate Dispute Letter: Take Action! 💪</h2>
+            }}>Generate Dispute 📝</h2>
 
             <div style={{
               marginBottom: "2rem"
@@ -857,19 +879,19 @@ export default function Dashboard() {
                   border: "1px solid rgba(255, 255, 255, 0.1)",
                   borderRadius: theme.borderRadius.md,
                   color: theme.colors.textPrimary,
-                  cursor: "pointer",
                   marginBottom: "1rem"
                 }}
               >
-                <option value="">Select an analyzed bill</option>
-                {analyzedBills.map((bill, index) => (
-                  <option key={index} value={bill.fileName}>
-                    {bill.fileName}
+                <option value="">Select a bill for dispute</option>
+                {recentUploads.map((upload, index) => (
+                  <option key={index} value={upload.id}>
+                    {upload.fileName}
                   </option>
                 ))}
               </select>
 
               <button
+                onClick={handleGenerateDispute}
                 disabled={!selectedBillForDispute}
                 style={{
                   width: "100%",
@@ -888,41 +910,8 @@ export default function Dashboard() {
                   gap: "0.5rem"
                 }}
               >
-                <span>
-                  {selectedBillForDispute 
-                    ? `Generate Dispute Letter for "${selectedBillForDispute}"`
-                    : "Select a bill to dispute"}
-                </span>
-                <span style={{ fontSize: "1.2rem" }}>📝</span>
+                Generate Dispute Letter 📝
               </button>
-            </div>
-
-            {/* Recent Disputes */}
-            <div style={{
-              marginTop: "2rem",
-              padding: "1.5rem",
-              background: "rgba(255, 255, 255, 0.05)",
-              borderRadius: theme.borderRadius.md
-            }}>
-              <h3 style={{
-                fontSize: "1rem",
-                fontWeight: "600",
-                marginBottom: "1rem"
-              }}>Recent Disputes</h3>
-              
-              <div style={{
-                color: theme.colors.textSecondary,
-                fontSize: "0.9rem",
-                textAlign: "center",
-                padding: "1.5rem 0",
-                borderRadius: theme.borderRadius.sm,
-                background: "rgba(255, 255, 255, 0.03)"
-              }}>
-                <p style={{ marginBottom: "0.5rem" }}>No disputes generated yet</p>
-                <p style={{ fontSize: "0.8rem", opacity: 0.7 }}>
-                  Select an analyzed bill above to generate your first dispute letter
-                </p>
-              </div>
             </div>
           </div>
         </div>
