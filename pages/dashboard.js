@@ -22,6 +22,7 @@ export default function Dashboard() {
   const [deletingFile, setDeletingFile] = useState(false);
   const [selectedBill, setSelectedBill] = useState('');
   const [selectedBillForDispute, setSelectedBillForDispute] = useState('');
+  const [analyzedBills, setAnalyzedBills] = useState([]);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -62,6 +63,26 @@ export default function Dashboard() {
       }
     };
   }, [router]);
+
+  useEffect(() => {
+    const handleRouteChange = (url) => {
+      // If we're returning to the dashboard
+      if (url === '/dashboard') {
+        // Refresh the analyzed bills
+        if (user) {
+          fetchAnalyzedBills();
+        }
+      }
+    };
+
+    // Add route change listener
+    router.events.on('routeChangeComplete', handleRouteChange);
+
+    // Remove listener on cleanup
+    return () => {
+      router.events.off('routeChangeComplete', handleRouteChange);
+    };
+  }, [router, user]);
 
   const UserAvatar = ({ email }) => (
     <div style={{
@@ -384,6 +405,73 @@ export default function Dashboard() {
     };
 
     fetchUploads();
+  }, [user]);
+
+  const fetchAnalyzedBills = async () => {
+    if (!user) return;
+
+    console.log('Fetching analyzed bills for user:', user.uid);
+    try {
+      // Simpler query that doesn't require a composite index
+      const q = query(
+        collection(db, 'bills'),
+        where('userId', '==', user.uid)
+      );
+
+      const querySnapshot = await getDocs(q);
+      console.log('Found bills:', querySnapshot.size);
+      const bills = querySnapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          // Only include bills that have been analyzed
+          if (!data.extractedData) return null;
+          console.log('Bill data:', data);
+
+          // Handle different date formats
+          let analyzedAtDate;
+          if (data.analyzedAt) {
+            if (typeof data.analyzedAt.toDate === 'function') {
+              // It's a Firestore timestamp
+              analyzedAtDate = data.analyzedAt.toDate().toLocaleString();
+            } else if (typeof data.analyzedAt === 'string') {
+              // It's an ISO string
+              analyzedAtDate = new Date(data.analyzedAt).toLocaleString();
+            } else {
+              // Fallback
+              analyzedAtDate = 'Date not available';
+            }
+          }
+
+          return {
+            id: doc.id,
+            fileName: data.fileName,
+            analyzedAt: analyzedAtDate,
+            isMedicalBill: data.isMedicalBill,
+            totalAmount: data.extractedData?.billInfo?.totalAmount || 'N/A',
+            serviceDates: data.extractedData?.billInfo?.serviceDates || 'N/A'
+          };
+        })
+        .filter(bill => bill !== null) // Remove non-analyzed bills
+        .sort((a, b) => {
+          // Sort by analyzedAt date in descending order
+          const dateA = new Date(a.analyzedAt || 0);
+          const dateB = new Date(b.analyzedAt || 0);
+          return dateB - dateA;
+        });
+
+      console.log('Setting analyzed bills:', bills);
+      setAnalyzedBills(bills);
+    } catch (error) {
+      console.error('Error fetching analyzed bills:', error);
+    }
+  };
+
+  // Add initial fetch of analyzed bills
+  useEffect(() => {
+    if (user) {
+      console.log('Initial fetch of analyzed bills');
+      fetchAnalyzedBills();
+    }
   }, [user]);
 
   const testFirestore = async () => {
@@ -839,11 +927,110 @@ export default function Dashboard() {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: "0.5rem"
+                  gap: "0.5rem",
+                  marginBottom: "2rem"
                 }}
               >
                 Analyze Bill ⚡
               </button>
+
+              {/* Analyzed Bills List */}
+              <div style={{
+                marginTop: "2rem",
+                borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+                paddingTop: "1.5rem"
+              }}>
+                <h3 style={{
+                  fontSize: "1.1rem",
+                  fontWeight: "600",
+                  marginBottom: "1rem",
+                  color: theme.colors.textPrimary
+                }}>Analyzed Bills</h3>
+
+                {analyzedBills.length > 0 ? (
+                  <div style={{ display: "grid", gap: "1rem" }}>
+                    {analyzedBills.map((bill, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          background: "rgba(255, 255, 255, 0.05)",
+                          borderRadius: theme.borderRadius.md,
+                          padding: "1rem",
+                          border: "1px solid rgba(255, 255, 255, 0.1)"
+                        }}
+                      >
+                        <div style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: "0.5rem"
+                        }}>
+                          <span style={{ color: theme.colors.textPrimary, fontWeight: "500" }}>
+                            {bill.fileName}
+                          </span>
+                          <span style={{
+                            padding: "0.25rem 0.5rem",
+                            borderRadius: "0.25rem",
+                            fontSize: "0.75rem",
+                            background: bill.isMedicalBill ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)",
+                            color: bill.isMedicalBill ? "#10B981" : "#EF4444",
+                            border: `1px solid ${bill.isMedicalBill ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)"}`
+                          }}>
+                            {bill.isMedicalBill ? "Medical Bill" : "Not Medical Bill"}
+                          </span>
+                        </div>
+                        <div style={{
+                          fontSize: "0.9rem",
+                          color: theme.colors.textSecondary,
+                          marginBottom: "0.5rem"
+                        }}>
+                          <div>Amount: {bill.totalAmount}</div>
+                          <div>Service Date: {bill.serviceDates}</div>
+                        </div>
+                        <div style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginTop: "0.75rem"
+                        }}>
+                          <span style={{
+                            fontSize: "0.8rem",
+                            color: theme.colors.textSecondary
+                          }}>
+                            Analyzed: {bill.analyzedAt}
+                          </span>
+                          <Link
+                            href={`/analysis/${bill.id}`}
+                            style={{
+                              padding: "0.5rem 1rem",
+                              background: theme.colors.primary,
+                              color: theme.colors.textPrimary,
+                              borderRadius: theme.borderRadius.md,
+                              textDecoration: "none",
+                              fontSize: "0.9rem",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.25rem"
+                            }}
+                          >
+                            View Analysis 📊
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{
+                    textAlign: "center",
+                    padding: "2rem",
+                    background: "rgba(255, 255, 255, 0.03)",
+                    borderRadius: theme.borderRadius.md,
+                    color: theme.colors.textSecondary
+                  }}>
+                    No analyzed bills yet
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

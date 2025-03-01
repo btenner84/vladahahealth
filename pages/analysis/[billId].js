@@ -5,7 +5,6 @@ import { theme } from '../../styles/theme';
 import Link from 'next/link';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import Document from 'next/document';
 
 export default function BillAnalysis() {
   const router = useRouter();
@@ -20,13 +19,14 @@ export default function BillAnalysis() {
     extractedText: '',
     loading: false
   });
+  const [isMedicalBill, setIsMedicalBill] = useState(null);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (user) {
         setUser(user);
         if (billId) {
-          await fetchBillData(billId);
+          await fetchBillData(billId, user);
         }
       } else {
         router.push('/signin');
@@ -51,21 +51,25 @@ export default function BillAnalysis() {
     };
   }, [router, billId]);
 
-  const fetchBillData = async (id) => {
+  const fetchBillData = async (id, currentUser) => {
     try {
       const billDoc = await getDoc(doc(db, 'bills', id));
       if (!billDoc.exists()) {
         throw new Error('Bill not found');
       }
-      const data = billDoc.data();
+      const data = { ...billDoc.data(), id };
       setBillData(data);
       
       // Start extraction if not already done
       if (!data.extractedData) {
-        startDataExtraction(data);
+        startDataExtraction(data, currentUser);
       } else {
         setExtractedData(data.extractedData);
+        setIsMedicalBill(data.isMedicalBill);
         setAnalysisStatus('complete');
+        if (data.extractedText) {
+          setRawData(prev => ({ ...prev, extractedText: data.extractedText }));
+        }
       }
     } catch (error) {
       console.error('Error fetching bill:', error);
@@ -92,7 +96,14 @@ export default function BillAnalysis() {
     }
   };
 
-  const startDataExtraction = async (billData) => {
+  const startDataExtraction = async (billData, currentUser) => {
+    if (!currentUser) {
+      console.error('No authenticated user');
+      setAnalysisStatus('error');
+      setExtractedData({ error: 'Authentication required' });
+      return;
+    }
+
     setAnalysisStatus('loading');
     setRawData(prev => ({ ...prev, loading: true }));
 
@@ -105,7 +116,7 @@ export default function BillAnalysis() {
         body: JSON.stringify({
           billId: billData.id,
           fileUrl: billData.fileUrl,
-          userId: user.uid  // Add userId to request
+          userId: currentUser.uid
         }),
       });
 
@@ -116,13 +127,14 @@ export default function BillAnalysis() {
 
       const data = await response.json();
       setExtractedData(data);
+      setIsMedicalBill(data.isMedicalBill);
       
       // Get the raw extracted text from Firestore
       const docRef = doc(db, 'bills', billData.id);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const extractedText = docSnap.data().extractedText || '';
-        console.log('Extracted text:', extractedText); // Add logging
+        console.log('Extracted text:', extractedText);
         setRawData(prev => ({ ...prev, extractedText }));
       }
 
@@ -130,7 +142,7 @@ export default function BillAnalysis() {
     } catch (error) {
       console.error('Extraction error:', error);
       setAnalysisStatus('error');
-      setExtractedData(error.cause || { error: error.message });
+      setExtractedData({ error: error.message });
     } finally {
       setRawData(prev => ({ ...prev, loading: false }));
     }
@@ -204,6 +216,7 @@ export default function BillAnalysis() {
         }}>
           {/* Document Viewer */}
           <div style={{
+            position: "relative",
             background: "#1E293B",
             borderRadius: "0.75rem",
             overflow: "hidden",
@@ -212,6 +225,22 @@ export default function BillAnalysis() {
             top: "2rem",
             border: "1px solid #334155"
           }}>
+            {isMedicalBill !== null && (
+              <div style={{
+                position: "absolute",
+                top: "1rem",
+                right: "1rem",
+                zIndex: 10,
+                padding: "0.5rem 1rem",
+                background: isMedicalBill ? "#10B981" : "#EF4444",
+                color: "white",
+                borderRadius: "0.5rem",
+                fontSize: "0.875rem",
+                fontWeight: "500"
+              }}>
+                {isMedicalBill ? "Medical Bill" : "Not a Medical Bill"}
+              </div>
+            )}
             {billData?.fileUrl ? (
               <iframe
                 src={billData.fileUrl}
@@ -242,7 +271,7 @@ export default function BillAnalysis() {
             flexDirection: "column",
             gap: "2rem"
           }}>
-            {/* Extracted Data */}
+            {/* Key Metrics */}
             <div style={{
               background: "#1E293B",
               borderRadius: "0.75rem",
@@ -254,9 +283,9 @@ export default function BillAnalysis() {
                 fontWeight: "600",
                 marginBottom: "1.5rem",
                 color: "#E2E8F0"
-              }}>Analysis Results</h2>
+              }}>Key Metrics</h2>
 
-              {analysisStatus === 'extracting' && (
+              {analysisStatus === 'loading' && (
                 <div style={{
                   textAlign: "center",
                   padding: "2rem"
@@ -275,52 +304,54 @@ export default function BillAnalysis() {
               )}
 
               {analysisStatus === 'complete' && extractedData && (
-                <div style={{ display: "grid", gap: "2rem" }}>
-                  {/* Patient Info */}
+                <div style={{ display: "grid", gap: "1.5rem" }}>
+                  {/* Key Metrics Grid */}
                   <div style={{
-                    background: "#0F172A",
-                    padding: "1.5rem",
-                    borderRadius: "0.75rem",
-                    border: "1px solid #334155"
+                    display: "grid",
+                    gap: "1rem",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))"
                   }}>
-                    <h3 style={{
-                      fontSize: "1.1rem",
-                      fontWeight: "600",
-                      marginBottom: "1rem",
-                      color: "#E2E8F0"
-                    }}>Patient Information</h3>
-                    <div style={{ display: "grid", gap: "0.5rem" }}>
-                      {Object.entries(extractedData.patientInfo).map(([key, value]) => (
-                        <p key={key} style={{ color: "#94A3B8" }}>
-                          <strong style={{ color: "#E2E8F0" }}>{key}:</strong> {value}
-                        </p>
-                      ))}
+                    {/* Total Amount */}
+                    <div style={{
+                      background: "#0F172A",
+                      padding: "1rem",
+                      borderRadius: "0.5rem",
+                      border: "1px solid #334155"
+                    }}>
+                      <p style={{ color: "#94A3B8", marginBottom: "0.5rem" }}>Total Amount</p>
+                      <p style={{ color: "#E2E8F0", fontSize: "1.25rem", fontWeight: "600" }}>
+                        {extractedData.billInfo?.totalAmount || '-'}
+                      </p>
+                    </div>
+
+                    {/* Service Date */}
+                    <div style={{
+                      background: "#0F172A",
+                      padding: "1rem",
+                      borderRadius: "0.5rem",
+                      border: "1px solid #334155"
+                    }}>
+                      <p style={{ color: "#94A3B8", marginBottom: "0.5rem" }}>Service Date</p>
+                      <p style={{ color: "#E2E8F0", fontSize: "1.25rem", fontWeight: "600" }}>
+                        {extractedData.billInfo?.serviceDates || '-'}
+                      </p>
+                    </div>
+
+                    {/* Due Date */}
+                    <div style={{
+                      background: "#0F172A",
+                      padding: "1rem",
+                      borderRadius: "0.5rem",
+                      border: "1px solid #334155"
+                    }}>
+                      <p style={{ color: "#94A3B8", marginBottom: "0.5rem" }}>Due Date</p>
+                      <p style={{ color: "#E2E8F0", fontSize: "1.25rem", fontWeight: "600" }}>
+                        {extractedData.billInfo?.dueDate || '-'}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Bill Info */}
-                  <div style={{
-                    background: "#0F172A",
-                    padding: "1.5rem",
-                    borderRadius: "0.75rem",
-                    border: "1px solid #334155"
-                  }}>
-                    <h3 style={{
-                      fontSize: "1.1rem",
-                      fontWeight: "600",
-                      marginBottom: "1rem",
-                      color: "#E2E8F0"
-                    }}>Bill Details</h3>
-                    <div style={{ display: "grid", gap: "0.5rem" }}>
-                      {Object.entries(extractedData.billInfo).map(([key, value]) => (
-                        <p key={key} style={{ color: "#94A3B8" }}>
-                          <strong style={{ color: "#E2E8F0" }}>{key}:</strong> {value}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Services */}
+                  {/* Services Summary */}
                   <div style={{
                     background: "#0F172A",
                     padding: "1.5rem",
@@ -333,50 +364,23 @@ export default function BillAnalysis() {
                       marginBottom: "1rem",
                       color: "#E2E8F0"
                     }}>Services</h3>
-                    <div style={{ display: "grid", gap: "1rem" }}>
-                      {extractedData.services.map((service, index) => (
+                    <div style={{ display: "grid", gap: "0.75rem" }}>
+                      {extractedData.services?.map((service, index) => (
                         <div key={index} style={{
-                          padding: "1rem",
+                          display: "grid",
+                          gridTemplateColumns: "1fr auto",
+                          gap: "1rem",
+                          padding: "0.75rem",
                           background: "#1E293B",
                           borderRadius: "0.5rem",
                           border: "1px solid #334155"
                         }}>
-                          {Object.entries(service).map(([key, value]) => (
-                            <p key={key} style={{ 
-                              color: "#94A3B8",
-                              marginBottom: "0.5rem"
-                            }}>
-                              <strong style={{ color: "#E2E8F0" }}>{key}:</strong> {value}
-                            </p>
-                          ))}
+                          <div style={{ color: "#E2E8F0" }}>{service.description || '-'}</div>
+                          <div style={{ color: "#94A3B8" }}>{service.amount || '-'}</div>
                         </div>
-                      ))}
+                      )) || <p style={{ color: "#94A3B8" }}>No services found</p>}
                     </div>
                   </div>
-
-                  {/* Insurance Info */}
-                  {extractedData.insuranceInfo && (
-                    <div style={{
-                      background: "#0F172A",
-                      padding: "1.5rem",
-                      borderRadius: "0.75rem",
-                      border: "1px solid #334155"
-                    }}>
-                      <h3 style={{
-                        fontSize: "1.1rem",
-                        fontWeight: "600",
-                        marginBottom: "1rem",
-                        color: "#E2E8F0"
-                      }}>Insurance Information</h3>
-                      <div style={{ display: "grid", gap: "0.5rem" }}>
-                        {Object.entries(extractedData.insuranceInfo).map(([key, value]) => (
-                          <p key={key} style={{ color: "#94A3B8" }}>
-                            <strong style={{ color: "#E2E8F0" }}>{key}:</strong> {value}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -404,7 +408,7 @@ export default function BillAnalysis() {
                     </div>
                   )}
                   <button
-                    onClick={() => billData && startDataExtraction(billData)}
+                    onClick={() => billData && startDataExtraction(billData, user)}
                     style={{
                       padding: "0.75rem 1.5rem",
                       background: "#3B82F6",
@@ -427,8 +431,7 @@ export default function BillAnalysis() {
               background: "#1E293B",
               borderRadius: "0.75rem",
               padding: "2rem",
-              border: "1px solid #334155",
-              marginTop: "2rem"
+              border: "1px solid #334155"
             }}>
               <div style={{
                 display: "flex",

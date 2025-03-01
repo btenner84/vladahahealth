@@ -11,15 +11,26 @@ const openai = new OpenAI({
 
 export async function extractTextFromPDF(pdfBuffer) {
   try {
+    console.log('Starting PDF extraction with buffer size:', pdfBuffer.length);
     const data = await pdf(pdfBuffer);
+    
     if (!data || !data.text) {
+      console.error('PDF extraction returned no text');
       throw new Error('No text content found in PDF');
     }
+    
+    console.log('PDF text extracted successfully, length:', data.text.length);
+    console.log('First 200 chars:', data.text.substring(0, 200));
+    
     return data.text;
   } catch (error) {
     console.error('PDF parsing error:', error);
     error.step = 'pdf_extraction';
-    error.details = { bufferSize: pdfBuffer.length };
+    error.details = { 
+      bufferSize: pdfBuffer.length,
+      errorMessage: error.message,
+      errorStack: error.stack
+    };
     throw error;
   }
 }
@@ -27,25 +38,50 @@ export async function extractTextFromPDF(pdfBuffer) {
 export async function extractTextFromImage(imageBuffer) {
   let worker = null;
   try {
-    worker = await createWorker();
+    console.log('Starting OCR with buffer size:', imageBuffer.length);
+    
+    worker = await createWorker('eng', 1, {
+      logger: progress => {
+        if (progress.status === 'recognizing text') {
+          console.log('OCR Progress:', Math.round(progress.progress * 100), '%');
+        }
+      }
+    });
+    
+    console.log('Tesseract worker created');
     await worker.loadLanguage('eng');
+    console.log('Language loaded');
     await worker.initialize('eng');
+    console.log('Worker initialized');
+    
     const { data: { text } } = await worker.recognize(imageBuffer);
+    console.log('OCR completed');
     
     if (!text || text.trim().length === 0) {
+      console.error('OCR returned no text');
       throw new Error('No text content found in image');
     }
+    
+    console.log('OCR text extracted successfully, length:', text.length);
+    console.log('First 200 chars:', text.substring(0, 200));
     
     return text;
   } catch (error) {
     console.error('OCR error:', error);
     error.step = 'ocr_extraction';
-    error.details = { bufferSize: imageBuffer.length };
+    error.details = { 
+      bufferSize: imageBuffer.length,
+      errorMessage: error.message,
+      errorStack: error.stack,
+      workerStatus: worker ? 'created' : 'not created'
+    };
     throw error;
   } finally {
     if (worker) {
       try {
+        console.log('Terminating Tesseract worker');
         await worker.terminate();
+        console.log('Worker terminated successfully');
       } catch (error) {
         console.error('Error terminating Tesseract worker:', error);
       }
@@ -55,12 +91,23 @@ export async function extractTextFromImage(imageBuffer) {
 
 export async function fetchFileBuffer(fileUrl) {
   try {
+    console.log('Fetching file from URL:', fileUrl);
+    
+    if (!fileUrl) {
+      throw new Error('No file URL provided');
+    }
+    
     // Handle Firebase Storage URLs
     if (fileUrl.includes('firebasestorage.googleapis.com')) {
-      // The URL is already a direct download URL
+      console.log('Detected Firebase Storage URL');
       const response = await fetch(fileUrl);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const buffer = await response.buffer();
+      console.log('File fetched successfully, buffer size:', buffer.length);
       return buffer;
     } else {
       throw new Error('Invalid file URL format');
@@ -68,59 +115,86 @@ export async function fetchFileBuffer(fileUrl) {
   } catch (error) {
     console.error('File fetch error:', error);
     error.step = 'file_fetch';
-    error.details = { url: fileUrl };
+    error.details = { 
+      url: fileUrl,
+      errorMessage: error.message,
+      errorStack: error.stack
+    };
     throw error;
   }
 }
 
-export async function processWithLLM(text) {
+export async function processWithLLM(text, isVerificationMode = false) {
   try {
     console.log('Starting LLM processing with text length:', text.length);
+    console.log('Mode:', isVerificationMode ? 'Verification' : 'Data Extraction');
     
-    const prompt = `
-      You are a medical bill analysis expert. Your task is to extract information from the following medical bill and return it ONLY as a valid JSON object.
-
-      REQUIRED JSON FORMAT:
-      {
-        "patientInfo": {
-          "fullName": "string",
-          "dateOfBirth": "string",
-          "accountNumber": "string",
-          "insuranceInfo": "string"
-        },
-        "billInfo": {
-          "totalAmount": "string",
-          "serviceDates": "string",
-          "dueDate": "string",
-          "facilityName": "string"
-        },
-        "services": [
-          {
-            "description": "string",
-            "code": "string",
-            "amount": "string",
-            "details": "string"
-          }
-        ],
-        "insuranceInfo": {
-          "amountCovered": "string",
-          "patientResponsibility": "string",
-          "adjustments": "string"
+    let prompt;
+    if (isVerificationMode) {
+      prompt = `
+        You are a medical bill analysis expert. Your task is to determine if the following text is from a medical bill.
+        Return ONLY a valid JSON object in this exact format:
+        {
+          "isMedicalBill": boolean,
+          "confidence": "string",
+          "reason": "string"
         }
-      }
 
-      IMPORTANT RULES:
-      1. Return ONLY the JSON object, no additional text or explanations
-      2. Use "Not found" for any missing information
-      3. Ensure all values are strings
-      4. Always include at least one item in the services array
-      5. Maintain the exact structure shown above
-      6. Do not add any additional fields
-      7. Ensure the response is valid JSON that can be parsed
+        IMPORTANT RULES:
+        1. Return ONLY the JSON object, no additional text
+        2. Set isMedicalBill to true only if you are confident this is a medical bill
+        3. Provide a brief reason for your decision
+        4. Set confidence to "high", "medium", or "low"
 
-      MEDICAL BILL TEXT TO ANALYZE:
-      ${text}
-    `;
+        TEXT TO ANALYZE:
+        ${text}
+      `;
+    } else {
+      prompt = `
+        You are a medical bill analysis expert. Your task is to extract information from the following medical bill and return it ONLY as a valid JSON object.
+
+        REQUIRED JSON FORMAT:
+        {
+          "patientInfo": {
+            "fullName": "string",
+            "dateOfBirth": "string",
+            "accountNumber": "string",
+            "insuranceInfo": "string"
+          },
+          "billInfo": {
+            "totalAmount": "string",
+            "serviceDates": "string",
+            "dueDate": "string",
+            "facilityName": "string"
+          },
+          "services": [
+            {
+              "description": "string",
+              "code": "string",
+              "amount": "string",
+              "details": "string"
+            }
+          ],
+          "insuranceInfo": {
+            "amountCovered": "string",
+            "patientResponsibility": "string",
+            "adjustments": "string"
+          }
+        }
+
+        IMPORTANT RULES:
+        1. Return ONLY the JSON object, no additional text or explanations
+        2. Use "Not found" for any missing information
+        3. Ensure all values are strings
+        4. Always include at least one item in the services array
+        5. Maintain the exact structure shown above
+        6. Do not add any additional fields
+        7. Ensure the response is valid JSON that can be parsed
+
+        MEDICAL BILL TEXT TO ANALYZE:
+        ${text}
+      `;
+    }
 
     console.log('Sending request to OpenAI...');
     
@@ -129,7 +203,9 @@ export async function processWithLLM(text) {
       messages: [
         {
           role: "system",
-          content: "You are a medical bill analysis expert. You must return ONLY valid JSON in the exact format specified. No other text or explanations."
+          content: isVerificationMode ? 
+            "You are a medical bill analysis expert. You must return ONLY valid JSON indicating if the text is from a medical bill." :
+            "You are a medical bill analysis expert. You must return ONLY valid JSON in the exact format specified. No other text or explanations."
         },
         {
           role: "user",
@@ -151,17 +227,25 @@ export async function processWithLLM(text) {
       // Try to parse the response as JSON
       const parsedResponse = JSON.parse(responseContent);
       
-      // Validate the required structure
-      const requiredKeys = ['patientInfo', 'billInfo', 'services', 'insuranceInfo'];
-      const missingKeys = requiredKeys.filter(key => !parsedResponse[key]);
-      
-      if (missingKeys.length > 0) {
-        throw new Error(`Missing required keys: ${missingKeys.join(', ')}`);
-      }
+      if (isVerificationMode) {
+        // Validate verification response
+        if (typeof parsedResponse.isMedicalBill !== 'boolean') {
+          throw new Error('Invalid verification response: isMedicalBill must be a boolean');
+        }
+        return parsedResponse;
+      } else {
+        // Validate the required structure for data extraction
+        const requiredKeys = ['patientInfo', 'billInfo', 'services', 'insuranceInfo'];
+        const missingKeys = requiredKeys.filter(key => !parsedResponse[key]);
+        
+        if (missingKeys.length > 0) {
+          throw new Error(`Missing required keys: ${missingKeys.join(', ')}`);
+        }
 
-      // Validate services array
-      if (!Array.isArray(parsedResponse.services) || parsedResponse.services.length === 0) {
-        throw new Error('Services must be a non-empty array');
+        // Validate services array
+        if (!Array.isArray(parsedResponse.services) || parsedResponse.services.length === 0) {
+          throw new Error('Services must be a non-empty array');
+        }
       }
 
       return parsedResponse;

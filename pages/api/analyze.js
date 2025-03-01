@@ -83,36 +83,87 @@ export default async function handler(req, res) {
       console.log('Starting text extraction...');
       console.log('File type:', fileType);
       
+      // Add file info logging
+      console.log('File details:', {
+        type: fileType,
+        url: fileUrl,
+        bufferSize: fileBuffer.length,
+        billId
+      });
+      
+      let text;
       if (fileType === 'pdf') {
         console.log('Extracting text from PDF...');
-        extractedText = await extractTextFromPDF(fileBuffer);
+        text = await extractTextFromPDF(fileBuffer);
       } else {
         console.log('Extracting text from image using OCR...');
-        extractedText = await extractTextFromImage(fileBuffer);
+        text = await extractTextFromImage(fileBuffer);
+      }
+      
+      // Validate extracted text
+      if (!text || typeof text !== 'string') {
+        throw new Error('Invalid text extraction result');
+      }
+      
+      extractedText = text.trim();
+      
+      if (extractedText.length === 0) {
+        throw new Error('Extracted text is empty after processing');
       }
       
       console.log('Text extraction successful!');
       console.log('Extracted text length:', extractedText.length);
-      console.log('First 200 characters of extracted text:', extractedText.substring(0, 200));
+      console.log('First 200 characters:', extractedText.substring(0, 200));
       
       // Save the extracted text to Firestore for debugging
       try {
         const billRef = adminDb.doc(`bills/${billId}`);
         await billRef.update({
           extractedText: extractedText,
-          extractedAt: new Date().toISOString()
+          extractedAt: new Date().toISOString(),
+          textExtractionMethod: fileType === 'pdf' ? 'pdf-parse' : 'tesseract',
+          extractionStats: {
+            textLength: extractedText.length,
+            timestamp: new Date().toISOString(),
+            fileType,
+            bufferSize: fileBuffer.length
+          }
         });
         console.log('Saved extracted text to Firestore');
       } catch (error) {
         console.error('Failed to save extracted text:', error);
+        // Don't throw here, just log the error and continue
       }
 
     } catch (error) {
       console.error('Text extraction failed:', error);
+      console.error('Error details:', error.details || 'No additional details');
+      console.error('Error stack:', error.stack);
+      
+      // Update Firestore with error information
+      try {
+        const billRef = adminDb.doc(`bills/${billId}`);
+        await billRef.update({
+          extractionError: {
+            message: error.message,
+            step: error.step || 'text_extraction',
+            details: error.details || {},
+            timestamp: new Date().toISOString()
+          }
+        });
+      } catch (updateError) {
+        console.error('Failed to save error information:', updateError);
+      }
+      
       return res.status(500).json({
         error: 'Text extraction failed',
-        details: error.message,
-        step: 'text_extraction'
+        details: {
+          message: error.message,
+          step: error.step || 'text_extraction',
+          fileType,
+          bufferSize: fileBuffer.length,
+          ...error.details
+        }
       });
     }
     
@@ -124,8 +175,20 @@ export default async function handler(req, res) {
         `Key starts with: ${process.env.OPENAI_API_KEY.substring(0, 7)}...` : 
         'No API key found');
       
-      const structuredData = await processWithLLM(extractedText);
-      console.log('LLM processing complete');
+      // First verify if it's a medical bill
+      console.log('Verifying if document is a medical bill...');
+      const verificationResult = await processWithLLM(extractedText, true);
+      console.log('Verification result:', verificationResult);
+      
+      let structuredData = null;
+      if (verificationResult.isMedicalBill) {
+        // Then extract data if it is a medical bill
+        console.log('Document is a medical bill, extracting data...');
+        structuredData = await processWithLLM(extractedText, false);
+        console.log('Data extraction complete');
+      } else {
+        console.log('Document is not a medical bill');
+      }
       
       // 5. Update Firestore
       try {
@@ -133,6 +196,9 @@ export default async function handler(req, res) {
         const billRef = adminDb.doc(`bills/${billId}`);
         await billRef.update({
           extractedData: structuredData,
+          isMedicalBill: verificationResult.isMedicalBill,
+          confidence: verificationResult.confidence,
+          reason: verificationResult.reason,
           analyzedAt: new Date().toISOString()
         });
         console.log('Firestore updated successfully');
@@ -145,7 +211,12 @@ export default async function handler(req, res) {
         });
       }
 
-      return res.status(200).json(structuredData);
+      return res.status(200).json({
+        ...structuredData,
+        isMedicalBill: verificationResult.isMedicalBill,
+        confidence: verificationResult.confidence,
+        reason: verificationResult.reason
+      });
     } catch (error) {
       console.error('LLM processing failed:', error);
       return res.status(500).json({
