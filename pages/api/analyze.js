@@ -8,6 +8,9 @@ import {
 } from '../../utils/documentProcessing';
 
 export default async function handler(req, res) {
+  // Increase timeout for Vercel
+  res.setTimeout(60000); // 60 seconds timeout
+
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -36,8 +39,13 @@ export default async function handler(req, res) {
     console.log('Starting analysis for billId:', billId);
     console.log('File URL:', fileUrl);
     console.log('User ID:', userId);
+    console.log('Environment:', process.env.NODE_ENV);
     console.log('Request method:', req.method);
     console.log('Request headers:', req.headers);
+
+    // Add timing logs
+    const startTime = Date.now();
+    console.log('Analysis started at:', new Date().toISOString());
 
     if (!billId || !fileUrl || !userId) {
       console.error('Missing parameters:', { billId, fileUrl, userId });
@@ -104,14 +112,11 @@ export default async function handler(req, res) {
       console.log('Starting text extraction...');
       console.log('File type:', fileType);
       
-      // Add file info logging
-      console.log('File details:', {
-        type: fileType,
-        url: fileUrl,
-        bufferSize: fileBuffer.length,
-        billId
-      });
-      
+      // Set a reasonable timeout for text extraction
+      const extractionTimeout = setTimeout(() => {
+        throw new Error('Text extraction timeout after 30 seconds');
+      }, 30000);
+
       let text;
       if (fileType === 'pdf') {
         console.log('Extracting text from PDF...');
@@ -120,6 +125,11 @@ export default async function handler(req, res) {
         console.log('Extracting text from image using OCR...');
         text = await extractTextFromImage(fileBuffer);
       }
+      
+      clearTimeout(extractionTimeout);
+      
+      const processingTime = Date.now() - startTime;
+      console.log(`Text extraction completed in ${processingTime}ms`);
       
       // Validate extracted text
       if (!text || typeof text !== 'string') {

@@ -40,7 +40,15 @@ export async function extractTextFromImage(imageBuffer) {
   try {
     console.log('Starting OCR with buffer size:', imageBuffer.length);
     
-    worker = await createWorker('eng', 1, {
+    worker = await createWorker({
+      logger: progress => console.log('OCR Progress:', progress),
+      errorHandler: error => console.error('OCR Error:', error),
+      // Optimize for text detection
+      workerOptions: {
+        workerPath: 'https://unpkg.com/tesseract.js@v4.1.1/dist/worker.min.js',
+        corePath: 'https://unpkg.com/tesseract.js-core@v4.1.1/tesseract-core.wasm.js',
+        langPath: 'https://raw.githubusercontent.com/naptha/tessdata/4.0.0',
+      },
       logger: progress => {
         if (progress.status === 'recognizing text') {
           console.log('OCR Progress:', Math.round(progress.progress * 100), '%');
@@ -49,11 +57,23 @@ export async function extractTextFromImage(imageBuffer) {
     });
     
     console.log('Tesseract worker created');
-    await worker.loadLanguage('eng');
+    await worker.loadLanguage('eng', {
+      cachePath: '/tmp/tesseract-cache'
+    });
     console.log('Language loaded');
-    await worker.initialize('eng');
+    await worker.initialize('eng', {
+      load_system_dawg: 0,
+      load_freq_dawg: 0
+    });
     console.log('Worker initialized');
     
+    // Set parameters for better text recognition
+    await worker.setParameters({
+      tessedit_pageseg_mode: '1',  // Automatic page segmentation with OSD
+      tessedit_ocr_engine_mode: '3',  // Default, based on what is available
+      preserve_interword_spaces: '1',
+    });
+
     const { data: { text } } = await worker.recognize(imageBuffer);
     console.log('OCR completed');
     
