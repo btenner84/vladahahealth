@@ -131,28 +131,24 @@ export default function BillAnalysis() {
       const contentType = response.headers.get('content-type');
       console.log('Response content-type:', contentType);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { error: errorText || 'Unknown error occurred' };
-        }
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-      }
-
-      const responseText = await response.text();
-      console.log('Raw response:', responseText);
-
       let data;
       try {
-        data = JSON.parse(responseText);
+        const text = await response.text();
+        console.log('Raw response:', text);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+        }
+
+        try {
+          data = JSON.parse(text);
+        } catch (parseError) {
+          console.error('Failed to parse response as JSON:', text);
+          throw new Error('Invalid JSON response from server');
+        }
       } catch (error) {
-        console.error('JSON parse error:', error);
-        console.error('Failed to parse response:', responseText);
-        throw new Error('Invalid response format from server');
+        console.error('API request failed:', error);
+        throw error;
       }
 
       setExtractedData(data);
@@ -171,10 +167,7 @@ export default function BillAnalysis() {
     } catch (error) {
       console.error('Extraction error:', error);
       setAnalysisStatus('error');
-      setExtractedData({ 
-        error: error.message,
-        details: error.details || 'No additional details available'
-      });
+      setExtractedData({ error: error.message });
     } finally {
       setRawData(prev => ({ ...prev, loading: false }));
     }
@@ -434,9 +427,6 @@ export default function BillAnalysis() {
                       color: "#94A3B8"
                     }}>
                       <p>{extractedData.error}</p>
-                      {extractedData.details && (
-                        <p style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>{extractedData.details}</p>
-                      )}
                     </div>
                   )}
                   <button

@@ -6,9 +6,9 @@ import {
   extractTextFromImage,
   processWithLLM
 } from '../../utils/documentProcessing';
-import { admin } from '../../firebase/admin';
-import { db } from '../../firebase/admin';
-import { fetch } from 'node-fetch';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import fetch from 'node-fetch';
 
 // Add better error handling and logging for image processing
 const analyzeDocument = async (fileUrl, userId, billId) => {

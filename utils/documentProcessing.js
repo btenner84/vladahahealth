@@ -36,23 +36,18 @@ export async function extractTextFromPDF(pdfBuffer) {
 }
 
 export async function extractTextFromImage(imageBuffer) {
-  console.log('Starting text extraction...');
+  console.log('Starting text extraction process...');
   
   try {
-    // Convert image to PNG format first (more widely supported)
-    const sharp = require('sharp');
-    const pngBuffer = await sharp(imageBuffer)
-      .png()
-      .toBuffer();
-    
-    console.log('Image converted to PNG');
-
-    // Initialize tesseract with more detailed configuration
+    // Create a worker with detailed logging
     const worker = await createWorker({
-      logger: progress => console.log('OCR Progress:', progress),
-      errorHandler: error => console.error('OCR Error:', error)
+      logger: m => console.log('OCR Progress:', m),
+      errorHandler: err => console.error('OCR Error:', err)
     });
 
+    console.log('Tesseract worker created');
+
+    // Initialize worker
     await worker.loadLanguage('eng');
     await worker.initialize('eng');
     
@@ -60,12 +55,25 @@ export async function extractTextFromImage(imageBuffer) {
     await worker.setParameters({
       tessedit_ocr_engine_mode: 3, // Legacy + LSTM mode
       preserve_interword_spaces: '1',
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?@#$%&*()-+=:;/" ', // Add any characters you expect
     });
 
-    const { data: { text } } = await worker.recognize(pngBuffer);
+    console.log('Starting OCR process...');
+    
+    // Convert buffer to base64
+    const base64Image = imageBuffer.toString('base64');
+    
+    // Recognize text from base64
+    const { data: { text } } = await worker.recognize(`data:image/png;base64,${base64Image}`);
+    
+    // Clean up
     await worker.terminate();
 
-    console.log('Text extraction completed, length:', text.length);
+    if (!text || text.trim().length === 0) {
+      throw new Error('No text was extracted from the image');
+    }
+
+    console.log('OCR completed, text length:', text.length);
     return text;
 
   } catch (error) {
