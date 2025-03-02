@@ -24,4 +24,4 @@ const nextConfig = {
   }
 }
 
-module.exports = nextConfig 
+module.exports = nextConfig // Force deploy Sun Mar  2 13:07:58 EST 2025
