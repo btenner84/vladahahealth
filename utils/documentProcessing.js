@@ -36,56 +36,49 @@ export async function extractTextFromPDF(pdfBuffer) {
 }
 
 export async function extractTextFromImage(imageBuffer) {
-  let worker = null;
+  console.log('Starting text extraction process...');
+  
   try {
-    console.log('Starting OCR with buffer size:', imageBuffer.length);
-    
-    worker = await createWorker('eng', 1, {
-      logger: progress => {
-        if (progress.status === 'recognizing text') {
-          console.log('OCR Progress:', Math.round(progress.progress * 100), '%');
-        }
-      }
+    // Create a worker with detailed logging
+    const worker = await createWorker({
+      logger: m => console.log('OCR Progress:', m),
+      errorHandler: err => console.error('OCR Error:', err)
     });
-    
+
     console.log('Tesseract worker created');
+
+    // Initialize worker
     await worker.loadLanguage('eng');
-    console.log('Language loaded');
     await worker.initialize('eng');
-    console.log('Worker initialized');
     
-    const { data: { text } } = await worker.recognize(imageBuffer);
-    console.log('OCR completed');
+    // Set parameters for better recognition
+    await worker.setParameters({
+      tessedit_ocr_engine_mode: 3, // Legacy + LSTM mode
+      preserve_interword_spaces: '1',
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?@#$%&*()-+=:;/" ', // Add any characters you expect
+    });
+
+    console.log('Starting OCR process...');
     
+    // Convert buffer to base64
+    const base64Image = imageBuffer.toString('base64');
+    
+    // Recognize text from base64
+    const { data: { text } } = await worker.recognize(`data:image/png;base64,${base64Image}`);
+    
+    // Clean up
+    await worker.terminate();
+
     if (!text || text.trim().length === 0) {
-      console.error('OCR returned no text');
-      throw new Error('No text content found in image');
+      throw new Error('No text was extracted from the image');
     }
-    
-    console.log('OCR text extracted successfully, length:', text.length);
-    console.log('First 200 chars:', text.substring(0, 200));
-    
+
+    console.log('OCR completed, text length:', text.length);
     return text;
+
   } catch (error) {
-    console.error('OCR error:', error);
-    error.step = 'ocr_extraction';
-    error.details = { 
-      bufferSize: imageBuffer.length,
-      errorMessage: error.message,
-      errorStack: error.stack,
-      workerStatus: worker ? 'created' : 'not created'
-    };
-    throw error;
-  } finally {
-    if (worker) {
-      try {
-        console.log('Terminating Tesseract worker');
-        await worker.terminate();
-        console.log('Worker terminated successfully');
-      } catch (error) {
-        console.error('Error terminating Tesseract worker:', error);
-      }
-    }
+    console.error('Text extraction error:', error);
+    throw new Error(`Text extraction failed: ${error.message}`);
   }
 }
 

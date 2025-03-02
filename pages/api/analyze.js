@@ -6,6 +6,9 @@ import {
   extractTextFromImage,
   processWithLLM
 } from '../../utils/documentProcessing';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

@@ -112,20 +112,39 @@ export default function BillAnalysis() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify({
           billId: billData.id,
           fileUrl: billData.fileUrl,
           userId: currentUser.uid
-        }),
+        })
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Analysis failed');
+      console.log('Response status:', response.status);
+      const contentType = response.headers.get('content-type');
+      console.log('Response content-type:', contentType);
+
+      let data;
+      try {
+        const text = await response.text();
+        console.log('Raw response:', text);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+        }
+
+        try {
+          data = JSON.parse(text);
+        } catch (parseError) {
+          console.error('Failed to parse response as JSON:', text);
+          throw new Error('Invalid JSON response from server');
+        }
+      } catch (error) {
+        console.error('API request failed:', error);
+        throw error;
       }
 
-      const data = await response.json();
       setExtractedData(data);
       setIsMedicalBill(data.isMedicalBill);
       
