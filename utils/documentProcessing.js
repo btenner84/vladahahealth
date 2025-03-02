@@ -36,76 +36,41 @@ export async function extractTextFromPDF(pdfBuffer) {
 }
 
 export async function extractTextFromImage(imageBuffer) {
-  let worker = null;
+  console.log('Starting text extraction...');
+  
   try {
-    console.log('Starting OCR with buffer size:', imageBuffer.length);
+    // Convert image to PNG format first (more widely supported)
+    const sharp = require('sharp');
+    const pngBuffer = await sharp(imageBuffer)
+      .png()
+      .toBuffer();
     
-    worker = await createWorker({
+    console.log('Image converted to PNG');
+
+    // Initialize tesseract with more detailed configuration
+    const worker = await createWorker({
       logger: progress => console.log('OCR Progress:', progress),
-      errorHandler: error => console.error('OCR Error:', error),
-      // Optimize for text detection
-      workerOptions: {
-        workerPath: 'https://unpkg.com/tesseract.js@v4.1.1/dist/worker.min.js',
-        corePath: 'https://unpkg.com/tesseract.js-core@v4.1.1/tesseract-core.wasm.js',
-        langPath: 'https://raw.githubusercontent.com/naptha/tessdata/4.0.0',
-      },
-      logger: progress => {
-        if (progress.status === 'recognizing text') {
-          console.log('OCR Progress:', Math.round(progress.progress * 100), '%');
-        }
-      }
+      errorHandler: error => console.error('OCR Error:', error)
     });
+
+    await worker.loadLanguage('eng');
+    await worker.initialize('eng');
     
-    console.log('Tesseract worker created');
-    await worker.loadLanguage('eng', {
-      cachePath: '/tmp/tesseract-cache'
-    });
-    console.log('Language loaded');
-    await worker.initialize('eng', {
-      load_system_dawg: 0,
-      load_freq_dawg: 0
-    });
-    console.log('Worker initialized');
-    
-    // Set parameters for better text recognition
+    // Set parameters for better recognition
     await worker.setParameters({
-      tessedit_pageseg_mode: '1',  // Automatic page segmentation with OSD
-      tessedit_ocr_engine_mode: '3',  // Default, based on what is available
+      tessedit_ocr_engine_mode: 3, // Legacy + LSTM mode
       preserve_interword_spaces: '1',
     });
 
-    const { data: { text } } = await worker.recognize(imageBuffer);
-    console.log('OCR completed');
-    
-    if (!text || text.trim().length === 0) {
-      console.error('OCR returned no text');
-      throw new Error('No text content found in image');
-    }
-    
-    console.log('OCR text extracted successfully, length:', text.length);
-    console.log('First 200 chars:', text.substring(0, 200));
-    
+    const { data: { text } } = await worker.recognize(pngBuffer);
+    await worker.terminate();
+
+    console.log('Text extraction completed, length:', text.length);
     return text;
+
   } catch (error) {
-    console.error('OCR error:', error);
-    error.step = 'ocr_extraction';
-    error.details = { 
-      bufferSize: imageBuffer.length,
-      errorMessage: error.message,
-      errorStack: error.stack,
-      workerStatus: worker ? 'created' : 'not created'
-    };
-    throw error;
-  } finally {
-    if (worker) {
-      try {
-        console.log('Terminating Tesseract worker');
-        await worker.terminate();
-        console.log('Worker terminated successfully');
-      } catch (error) {
-        console.error('Error terminating Tesseract worker:', error);
-      }
-    }
+    console.error('Text extraction error:', error);
+    throw new Error(`Text extraction failed: ${error.message}`);
   }
 }
 
