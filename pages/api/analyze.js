@@ -15,61 +15,70 @@ const analyzeDocument = async (fileUrl, userId, billId) => {
   console.log('Starting document analysis...', { fileUrl, billId });
   
   try {
-    // Fetch the image
-    const response = await fetch(fileUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image: ${response.statusText}`);
-    }
-    
-    const buffer = await response.arrayBuffer();
-    
-    // Add detailed logging
-    console.log('Image fetched successfully, size:', buffer.byteLength);
-    
-    // Convert ArrayBuffer to Buffer
-    const imageBuffer = Buffer.from(buffer);
-    
-    // Try to get image metadata first
-    try {
-      const sharp = require('sharp');
-      const metadata = await sharp(imageBuffer).metadata();
-      console.log('Image metadata:', metadata);
-    } catch (metadataError) {
-      console.error('Metadata extraction failed:', metadataError);
-      // Continue anyway - this is just for debugging
+    // Detect file type first
+    const fileType = await detectFileType(fileUrl);
+    console.log('File type detected:', fileType);
+
+    // Fetch file buffer
+    const fileBuffer = await fetchFileBuffer(fileUrl);
+    console.log('File fetched, size:', fileBuffer.length);
+
+    // Extract text based on file type
+    let extractedText;
+    if (fileType === 'pdf') {
+      extractedText = await extractTextFromPDF(fileBuffer);
+    } else {
+      extractedText = await extractTextFromImage(fileBuffer);
     }
 
-    // Extract text with more detailed error handling
-    const extractedText = await extractTextFromImage(imageBuffer);
-    
     if (!extractedText || extractedText.trim().length === 0) {
-      throw new Error('No text was extracted from the image');
+      throw new Error('No text was extracted from the document');
     }
 
     console.log('Text extracted successfully, length:', extractedText.length);
 
-    // Update document status in Firestore
-    const docRef = db.collection('bills').doc(billId);
+    // First verify if it's a medical bill
+    console.log('Verifying if document is a medical bill...');
+    const verificationResult = await processWithLLM(extractedText, true);
+    console.log('Verification result:', verificationResult);
+
+    let structuredData = null;
+    if (verificationResult.isMedicalBill) {
+      // Then extract data if it is a medical bill
+      console.log('Document is a medical bill, extracting data...');
+      structuredData = await processWithLLM(extractedText, false);
+      console.log('Data extraction complete');
+    }
+
+    // Update document in Firestore
+    const docRef = adminDb.collection('bills').doc(billId);
     await docRef.update({
-      extractedData: extractedText,
-      analyzedAt: admin.firestore.FieldValue.serverTimestamp(),
+      extractedText,
+      extractedData: structuredData,
+      isMedicalBill: verificationResult.isMedicalBill,
+      confidence: verificationResult.confidence,
+      reason: verificationResult.reason,
+      analyzedAt: new Date().toISOString(),
       status: 'analyzed'
     });
 
     return {
       success: true,
-      extractedText,
-      message: 'Document analyzed successfully'
+      ...structuredData,
+      isMedicalBill: verificationResult.isMedicalBill,
+      confidence: verificationResult.confidence,
+      reason: verificationResult.reason
     };
 
   } catch (error) {
     console.error('Analysis error:', error);
     
     // Update document status to failed
-    const docRef = db.collection('bills').doc(billId);
+    const docRef = adminDb.collection('bills').doc(billId);
     await docRef.update({
       status: 'failed',
-      error: error.message
+      error: error.message,
+      failedAt: new Date().toISOString()
     });
 
     throw new Error(`Analysis failed: ${error.message}`);
@@ -114,7 +123,7 @@ export default async function handler(req, res) {
     }
 
     // Verify ownership
-    const billDoc = await db.collection('bills').doc(billId).get();
+    const billDoc = await adminDb.collection('bills').doc(billId).get();
     if (!billDoc.exists || billDoc.data().userId !== userId) {
       return res.status(403).json({ error: 'Unauthorized access to this document' });
     }
