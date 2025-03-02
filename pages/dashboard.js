@@ -65,24 +65,20 @@ export default function Dashboard() {
   }, [router]);
 
   useEffect(() => {
+    // Listen for route changes to refresh data when returning to dashboard
     const handleRouteChange = (url) => {
-      // If we're returning to the dashboard
-      if (url === '/dashboard') {
-        // Refresh the analyzed bills
-        if (user) {
-          fetchAnalyzedBills();
-        }
+      if (url === '/dashboard' && user) {
+        console.log('Returned to dashboard, refreshing data...');
+        fetchAnalyzedBills();
       }
     };
 
-    // Add route change listener
     router.events.on('routeChangeComplete', handleRouteChange);
 
-    // Remove listener on cleanup
     return () => {
       router.events.off('routeChangeComplete', handleRouteChange);
     };
-  }, [router, user]);
+  }, [user]);
 
   const UserAvatar = ({ email }) => (
     <div style={{
@@ -420,42 +416,36 @@ export default function Dashboard() {
 
       const querySnapshot = await getDocs(q);
       console.log('Found bills:', querySnapshot.size);
+      
       const bills = querySnapshot.docs
         .map(doc => {
           const data = doc.data();
+          console.log('Processing bill:', doc.id, data);
+          
           // Only include bills that have been analyzed
-          if (!data.extractedData) return null;
-          console.log('Bill data:', data);
+          if (!data.analyzedAt) return null;
 
-          // Handle different date formats
-          let analyzedAtDate;
-          if (data.analyzedAt) {
-            if (typeof data.analyzedAt.toDate === 'function') {
-              // It's a Firestore timestamp
-              analyzedAtDate = data.analyzedAt.toDate().toLocaleString();
-            } else if (typeof data.analyzedAt === 'string') {
-              // It's an ISO string
-              analyzedAtDate = new Date(data.analyzedAt).toLocaleString();
-            } else {
-              // Fallback
-              analyzedAtDate = 'Date not available';
-            }
+          // Convert timestamps to dates if needed
+          let analyzedAt = data.analyzedAt;
+          if (data.analyzedAt && typeof data.analyzedAt.toDate === 'function') {
+            analyzedAt = data.analyzedAt.toDate().toISOString();
           }
 
           return {
             id: doc.id,
             fileName: data.fileName,
-            analyzedAt: analyzedAtDate,
+            analyzedAt: analyzedAt,
             isMedicalBill: data.isMedicalBill,
+            confidence: data.confidence,
             totalAmount: data.extractedData?.billInfo?.totalAmount || 'N/A',
             serviceDates: data.extractedData?.billInfo?.serviceDates || 'N/A'
           };
         })
-        .filter(bill => bill !== null) // Remove non-analyzed bills
+        .filter(bill => bill !== null)
         .sort((a, b) => {
           // Sort by analyzedAt date in descending order
-          const dateA = new Date(a.analyzedAt || 0);
-          const dateB = new Date(b.analyzedAt || 0);
+          const dateA = new Date(a.analyzedAt);
+          const dateB = new Date(b.analyzedAt);
           return dateB - dateA;
         });
 
@@ -466,12 +456,25 @@ export default function Dashboard() {
     }
   };
 
-  // Add initial fetch of analyzed bills
+  // Add useEffect to listen for route changes
   useEffect(() => {
+    const handleRouteChange = (url) => {
+      if (url === '/dashboard') {
+        console.log('Back to dashboard, refreshing analyzed bills...');
+        fetchAnalyzedBills();
+      }
+    };
+
+    router.events.on('routeChangeComplete', handleRouteChange);
+    
+    // Initial fetch
     if (user) {
-      console.log('Initial fetch of analyzed bills');
       fetchAnalyzedBills();
     }
+
+    return () => {
+      router.events.off('routeChangeComplete', handleRouteChange);
+    };
   }, [user]);
 
   const testFirestore = async () => {
