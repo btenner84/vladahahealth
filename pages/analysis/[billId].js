@@ -108,24 +108,53 @@ export default function BillAnalysis() {
     setRawData(prev => ({ ...prev, loading: true }));
 
     try {
+      console.log('Starting analysis with data:', {
+        billId: billData.id,
+        fileUrl: billData.fileUrl,
+        userId: currentUser.uid
+      });
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify({
           billId: billData.id,
           fileUrl: billData.fileUrl,
           userId: currentUser.uid
-        }),
+        })
       });
 
+      console.log('Response status:', response.status);
+      const contentType = response.headers.get('content-type');
+      console.log('Response content-type:', contentType);
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Analysis failed');
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (e) {
+          errorData = { error: errorText || 'Unknown error occurred' };
+        }
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
+      const responseText = await response.text();
+      console.log('Raw response:', responseText);
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (error) {
+        console.error('JSON parse error:', error);
+        console.error('Failed to parse response:', responseText);
+        throw new Error('Invalid response format from server');
+      }
+
       setExtractedData(data);
       setIsMedicalBill(data.isMedicalBill);
       
@@ -142,7 +171,10 @@ export default function BillAnalysis() {
     } catch (error) {
       console.error('Extraction error:', error);
       setAnalysisStatus('error');
-      setExtractedData({ error: error.message });
+      setExtractedData({ 
+        error: error.message,
+        details: error.details || 'No additional details available'
+      });
     } finally {
       setRawData(prev => ({ ...prev, loading: false }));
     }

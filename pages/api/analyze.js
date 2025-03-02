@@ -8,8 +8,27 @@ import {
 } from '../../utils/documentProcessing';
 
 export default async function handler(req, res) {
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  // Handle preflight request
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ 
+      error: 'Method not allowed',
+      allowedMethod: 'POST',
+      receivedMethod: req.method
+    });
   }
 
   try {
@@ -17,6 +36,8 @@ export default async function handler(req, res) {
     console.log('Starting analysis for billId:', billId);
     console.log('File URL:', fileUrl);
     console.log('User ID:', userId);
+    console.log('Request method:', req.method);
+    console.log('Request headers:', req.headers);
 
     if (!billId || !fileUrl || !userId) {
       console.error('Missing parameters:', { billId, fileUrl, userId });
